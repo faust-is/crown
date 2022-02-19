@@ -4,7 +4,7 @@ CFLAGS ?=-c -Wall
 LDFLAGS ?=				#linking flags
 
 LIBS ?=
-INC ?=-I/home/ivan/project/audiodev
+INC ?=-I../audiodev
 
 .PHONY: all clean
 
