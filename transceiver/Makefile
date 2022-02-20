@@ -26,7 +26,7 @@ OBJECTS = $(SOURCES:.c=.o)
 all: ${TARGET}
 # linking
 $(TARGET): $(OBJECTS)
-	$(CC) ${LDFLAGS} -o $@ $^ -L. -laudiodev
+	$(CC) ${LDFLAGS} -o $@ $^ -L. -laudiodev -Wl,-rpath=.
 
 $(OBJECTS): %.o: %.c
 	$(CC) ${CFFLAGS} $(INC) -c $<
