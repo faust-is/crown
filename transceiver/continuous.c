@@ -39,22 +39,17 @@ sleep_msec(int32 ms)
  */
 
 static void
-recognize_from_microphone()
+recognize_from_microphone(int samplerate)
 {
     ad_rec_t *ad;
     int16 adbuf[2048];
     int32 k;
     char const *hyp;
 
-    if ((ad = ad_open_dev(cmd_ln_str_r(config, "-adcdev"),
-                          (int) cmd_ln_float32_r(config,
-                                                 "-samprate"))) == NULL)
+    if ((ad = ad_open_dev(NULL, samplerate)) == NULL)
         E_FATAL("Failed to open audio device\n");
     if (ad_start_rec(ad) < 0)
         E_FATAL("Failed to start recording\n");
-
-    if (ps_start_utt(ps) < 0)
-        E_FATAL("Failed to start utterance\n");
 
     E_INFO("Ready....\n");
 
@@ -62,7 +57,6 @@ recognize_from_microphone()
         if ((k = ad_read(ad, adbuf, 2048)) < 0)
             E_FATAL("Failed to read audio\n");
         
-        }
         sleep_msec(100);
     }
     ad_close(ad);
@@ -72,9 +66,9 @@ recognize_from_microphone()
 int
 main(int argc, char *argv[])
 {
+    int samplerate = 16000;
     E_INFO("%s COMPILED ON: %s, AT: %s\n\n", argv[0], __DATE__, __TIME__);
-
-    recognize_from_microphone();
+    recognize_from_microphone(samplerate);
     
     return 0;
 }

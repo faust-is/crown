@@ -11,7 +11,10 @@ INC ?=-I../audiodev
 # Название модуля
 TARGET ?= continuous
 # Исходные файлы
-SOURCES ?= continuous.c
+SOURCES ?= continuous.c\
+err.c\
+filename.c
+
 HEADERS ?=\
 ad.h\
 sphinxbase_export.h\
@@ -23,13 +26,10 @@ OBJECTS = $(SOURCES:.c=.o)
 all: ${TARGET}
 # linking
 $(TARGET): $(OBJECTS)
-	$(CC) ${LDFLAGS} -o $@ $^
+	$(CC) ${LDFLAGS} -o $@ $^ -L. -laudiodev
 
-%.o: %.c
-	$(CC) ${CFFLAGS} $(INC) -c $(SOURCES) -o $(OBJECTS)
+$(OBJECTS): %.o: %.c
+	$(CC) ${CFFLAGS} $(INC) -c $<
 
-#$(TARGET): $(SOURCES)
-#	$(CC) ${LDFLAGS} $(INC) -c $(SOURCES) -o $(OBJECTS)
-#$(CC) $(CFLAGS) -MM $< >$@
 clean:
 	rm -f ${TARGET}	${OBJECTS}
