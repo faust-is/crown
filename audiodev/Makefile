@@ -15,7 +15,7 @@ LDFLAGS ?=-shared 			#linking flags
 .PHONY: all clean
 
 # Название модуля
-TARGET ?= audiodev.so
+TARGET ?= libaudiodev.so
 # Исходные файлы
 SOURCES ?=\
 ad_oss.c

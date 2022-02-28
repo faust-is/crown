@@ -16,9 +16,11 @@ CC := $(CGT_ARM_PREFIX)gcc
 LD := $(CGT_ARM_PREFIX)ld
 AR := $(CGT_ARM_PREFIX)ar
 
-LIBDIR ?= -L. -L../frontend\
+LIBDIR ?= -L../audiodev\
+-L../frontend\
 -L../TETRA\
 -L../$(SRC_MELP)
+
 
 #CFLAGS ?= -c -Wall
 CFLAGS := $(OS_FLAGS_COMMON) $(CC_FLAGS_COMMON) $(CC_DEFINES)
@@ -53,7 +55,7 @@ OBJECTS = $(SOURCES:.c=.o)
 all: ${TARGET}
 # linking
 $(TARGET): $(OBJECTS)
-	$(CC) ${LDFLAGS} -o $@ $^ $(LIBDIR) $(LIBS) $(DEFINES) -Wl,-rpath=.
+	$(CC) ${LDFLAGS} -o $@ $^ $(LIBDIR) $(LIBS) $(DEFINES) -Wl,-rpath=../audiodev
 
 $(OBJECTS): %.o: %.c
 	$(CC) ${CFFLAGS} $(INC) -c $<
