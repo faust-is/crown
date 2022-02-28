@@ -3,3 +3,5 @@
 
 ad_oss.c(115): Failed to open audio device(/dev/dsp): No such file or directory
 FATAL: "continuous.c", line 50: Failed to open audio device
+
+2. Для компиляции и сборки кодеков необходимо выполнить: sudo apt install gcc-arm-linux-gnueabi
