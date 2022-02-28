@@ -12,10 +12,10 @@
 
 #include "vocoderAPI.h"
 #include <ctype.h>
-#include <stdio.h>
+//#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <string.h>
+//#include <string.h>
 #include <unistd.h>
 #include <sched.h>
 #include <sys/mman.h>
