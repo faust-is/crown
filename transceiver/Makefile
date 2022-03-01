@@ -1,64 +1,89 @@
-CGT_ARM_PREFIX="arm-linux-gnueabi-"
+CC ?= gcc
+LD ?= gcc
+LIBDIR ?= /usr/lib
+INST ?= install -pD -m 644
 
-SRC_MELP ?= melpe_fxp
+MELP_SRC ?= melp_fp
+#melpe_fxp or melp_fp
 
-ifeq ($(DEVROOT),)
-SYS_OPT = 
-else
-SYS_OPT = --sysroot="$(DEVROOT)"
-endif
+# NORMAL DEBUG
+MODE := NORMAL
+#MODE_NORMAL ?= -
+MODE_DEBUG ?= -O2 -g -ggdb
 
-CC_FLAGS_OS ?= -static -O3 -std=gnu99 -march=armv5te -mtune=arm926ej-s -mfloat-abi=soft -Wall -pedantic $(SYS_OPT)
-CC_FLAGS_COMMON := $(CC_FLAGS_OS)
-LD_FLAGS_COMMON := $(SYS_OPT)
+CC_FLAGS_OS ?= -std=gnu99 -Wall -Wextra -pedantic
+CFLAGS = $(CC_FLAGS_OS) $(MODE_$(MODE)) -DVOCODERLIB_USE_MELPE -DVOCODERLIB_USE_TETRA
 
-CC := $(CGT_ARM_PREFIX)gcc
-LD := $(CGT_ARM_PREFIX)ld
-AR := $(CGT_ARM_PREFIX)ar
+INCADD ?= -I../include -I../audiodev
 
-LIBDIR ?= -L../audiodev\
--L../frontend\
--L../TETRA\
--L../$(SRC_MELP)
+all: build continuous
 
+build: ../$(MELP_SRC)/libmelpe.a ../TETRA/libtetra.a libvocoder_frontend.a
 
-#CFLAGS ?= -c -Wall
-CFLAGS := $(OS_FLAGS_COMMON) $(CC_FLAGS_COMMON) $(CC_DEFINES)
-LD_FLAGS := $(LD_FLAGS_COMMON) $(LD_FLAGS_OS) -lm
+continuous: continuous.o err.o filename.o ../frontend/vocoder_frontend.o
+	$(CC)  $(CFLAGS) $^ -o $@ -L../$(MELP_SRC) -L../TETRA -L../audiodev -lmelpe -lm -ltetra -laudiodev -Wl,-rpath=../audiodev
 
+#votest: votest.o ../frontend/vocoder_frontend.o
+#	$(CC)  $(CFLAGS) $^ -o $@ -L../$(MELP_SRC) -L../TETRA -lmelpe -lm -ltetra
 
-LIBS ?= -laudiodev\
--lvocoder_frontend\
--ltetra\
--lmelpe
+#votest_mt: votest_mt.o ../frontend/vocoder_frontend.o ut_md5.o
+#	$(CC)  $(CFLAGS) $^ -o $@ -L../$(MELP_SRC) -L../TETRA -lmelpe -lm -lrt -ltetra -lpthread
 
+#encoder: encoder.o ../frontend/vocoder_frontend.o
+#	$(CC)  $(CFLAGS) $^ -o $@ -L../$(MELP_SRC) -L../TETRA -lmelpe -lm -ltetra
 
-INC ?=-I../audiodev -I../include
+#decoder: decoder.o ../frontend/vocoder_frontend.o
+#	$(CC)  $(CFLAGS) $^ -o $@ -L../$(MELP_SRC) -L../TETRA -lmelpe -lm -ltetra
 
-.PHONY: all clean
+#codec: codec.o ../frontend/vocoder_frontend.o
+#	$(CC)  $(CFLAGS) $^ -o $@ -L../$(MELP_SRC) -L../TETRA -lmelpe -lm -ltetra
 
-# Название модуля
-TARGET ?= continuous
-# Исходные файлы
-SOURCES ?= continuous.c\
-err.c\
-filename.c
+libvocoder_frontend.a: ../frontend/vocoder_frontend.o
+	$(AR) -r $@ $^
 
-HEADERS ?=\
-ad.h\
-sphinxbase_export.h\
-sphinx_config.h\
-prim_type.h
-# Объектные файлы
-OBJECTS = $(SOURCES:.c=.o)
+../$(MELP_SRC)/libmelpe.a:
+	$(MAKE) -C ../$(MELP_SRC) OS=posix MODE=$(MODE)
 
-all: ${TARGET}
-# linking
-$(TARGET): $(OBJECTS)
-	$(CC) ${LDFLAGS} -o $@ $^ $(LIBDIR) $(LIBS) $(DEFINES) -Wl,-rpath=../audiodev
+../TETRA/libtetra.a:
+	$(MAKE) -C ../TETRA OS=posix MODE=$(MODE)
 
-$(OBJECTS): %.o: %.c
-	$(CC) ${CFFLAGS} $(INC) -c $<
+%.o: %.c
+	$(CC) $(CFLAGS) $(INCADD) -c $< -o $@
 
 clean:
-	rm -f ${TARGET}	${OBJECTS}
+	$(MAKE) -C  ../$(MELP_SRC) OS=posix MODE=$(MODE) clean
+	$(MAKE) -C  ../TETRA OS=posix MODE=$(MODE) clean
+	rm -f *.o ../frontend/vocoder_frontend.o votest votest_mt encoder decoder codec libvocoder_frontend.a
+
+test:
+	cppcheck --enable=all .
+	scan-build $(MAKE)
+
+install: build
+	$(INST) ../$(MELP_SRC)/libmelpe.a -t $(DESTDIR)/$(LIBDIR)
+	$(INST) ../files/melpe_standalone.pc $(DESTDIR)/$(LIBDIR)/pkgconfig/melpe.pc
+	$(INST) ../include/*.h -t $(DESTDIR)/usr/include
+	$(INST) libvocoder_frontend.a -t $(DESTDIR)/$(LIBDIR)
+	$(INST) ../files/vocoder_frontend.pc $(DESTDIR)/$(LIBDIR)/pkgconfig/vocoder_frontend.pc
+	$(INST) ../TETRA/libtetra.a -t $(DESTDIR)/$(LIBDIR)
+	$(INST) ../files/tetra_standalone.pc $(DESTDIR)/$(LIBDIR)/pkgconfig/tetra.pc
+
+.PHONY: all clean test install
+
+
+$(info $$CC is [${$CC}])
+$(info $$LD is [${LD}])
+$(info $$LIBDIR is [${LIBDIR}])
+$(info $$INST is [${INST}])
+$(info $$MELP_SRC is [${MELP_SRC}])
+$(info $$MODE is [${MODE}])
+$(info $$MODE_DEBUG is [${MODE_DEBUG}])
+$(info $$CC_FLAGS_OS is [${CC_FLAGS_OS}])
+$(info $$CFLAGS is [${CFLAGS}])
+$(info $$INCADD is [${INCADD}])
+$(info $$AR is [${AR}])
+$(info $$MAKE is [${MAKE}])
+$(info $$DESTDIR is [${DESTDIR}])
+
+
+
