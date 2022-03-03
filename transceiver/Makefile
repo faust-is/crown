@@ -23,21 +23,6 @@ build: ../$(MELP_SRC)/libmelpe.a ../TETRA/libtetra.a libvocoder_frontend.a
 continuous: continuous.o err.o filename.o ../frontend/vocoder_frontend.o
 	$(CC)  $(CFLAGS) $^ -o $@ -L../$(MELP_SRC) -L../TETRA -L../audiodev -lmelpe -lm -ltetra -laudiodev -Wl,-rpath=../audiodev
 
-#votest: votest.o ../frontend/vocoder_frontend.o
-#	$(CC)  $(CFLAGS) $^ -o $@ -L../$(MELP_SRC) -L../TETRA -lmelpe -lm -ltetra
-
-#votest_mt: votest_mt.o ../frontend/vocoder_frontend.o ut_md5.o
-#	$(CC)  $(CFLAGS) $^ -o $@ -L../$(MELP_SRC) -L../TETRA -lmelpe -lm -lrt -ltetra -lpthread
-
-#encoder: encoder.o ../frontend/vocoder_frontend.o
-#	$(CC)  $(CFLAGS) $^ -o $@ -L../$(MELP_SRC) -L../TETRA -lmelpe -lm -ltetra
-
-#decoder: decoder.o ../frontend/vocoder_frontend.o
-#	$(CC)  $(CFLAGS) $^ -o $@ -L../$(MELP_SRC) -L../TETRA -lmelpe -lm -ltetra
-
-#codec: codec.o ../frontend/vocoder_frontend.o
-#	$(CC)  $(CFLAGS) $^ -o $@ -L../$(MELP_SRC) -L../TETRA -lmelpe -lm -ltetra
-
 libvocoder_frontend.a: ../frontend/vocoder_frontend.o
 	$(AR) -r $@ $^
 
@@ -53,7 +38,7 @@ libvocoder_frontend.a: ../frontend/vocoder_frontend.o
 clean:
 	$(MAKE) -C  ../$(MELP_SRC) OS=posix MODE=$(MODE) clean
 	$(MAKE) -C  ../TETRA OS=posix MODE=$(MODE) clean
-	rm -f *.o ../frontend/vocoder_frontend.o votest votest_mt encoder decoder codec libvocoder_frontend.a
+	rm -f *.o ../frontend/vocoder_frontend.o continuous libvocoder_frontend.a
 
 test:
 	cppcheck --enable=all .

@@ -19,8 +19,8 @@ LDFLAGS ?=-shared 			#linking flags
 # Название модуля
 TARGET ?= libaudiodev.so
 # Исходные файлы
-SOURCES ?=\
-ad_oss.c
+SOURCES ?= ad_pulse.c
+#ad_oss.c
 #ad_alsa.c\
 #ad_pulse.c\
 #ad_win32.c\
@@ -38,7 +38,8 @@ OBJECTS = $(SOURCES:.c=.o)
 all: ${TARGET}
 
 $(TARGET): $(OBJECTS)
-	$(CC) ${LDFLAGS} -o $@ $^
+	$(CC) ${LDFLAGS} -o $@ $^ -lpulse-simple
+#	$(CC) ${LDFLAGS} -o $@ $^ #для OSS
 
 $(SOURCES:.c=.d):%.d:%.c
 	$(CC) $(CFLAGS) -MM $< >$@
