@@ -136,37 +136,133 @@ sleep_msec(int32 ms)
 static void
 recognize_from_microphone(int samplerate, int vocoder_identification)
 {
-    ad_rec_t *ad;
-    int16 adbuf[2048];
-    int32 k;
-    char const *hyp;
-    
-    // размер блока на входе кодера
-    size_t frame_sp = 0;
-    // размер блока после кодирования
-    size_t frame_cb = 0;
+	ad_rec_t *ad;
+	//int16 adbuf[2048];
+	//int32 k;
 
-    if ((ad = ad_open_dev(NULL, samplerate)) == NULL)
-        E_FATAL("Failed to open audio device\n");
-    if (ad_start_rec(ad) < 0)
-        E_FATAL("Failed to start recording\n");
-
-    frame_sp = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_ENCODER);
-    frame_cb = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_DECODER);
-    
-    E_INFO("frame_sp = %x\n", frame_sp);
-    E_INFO("frame_cb = %x\n", frame_cb);
-    
-    if ((frame_sp == 0) || (frame_cb == 0))
-	E_FATAL("Cannot determine IO size for codec %d\n", vocoder_identification);
+	void* encoder;
+	int status = 0;
 	
-    for (;;) {
-        if ((k = ad_read(ad, adbuf, 2048)) < 0)
-            E_FATAL("Failed to read audio\n");
-        
-        sleep_msec(100);
-    }
-    ad_close(ad);
+	int rtmode = 0;
+	
+	struct timeval   tv0, tv1;// tv2;
+	uint32_t  sec, usec;
+	uint32_t delta = 0;
+	uint32_t max, min, sum, avg, n_samples;
+//	uint32_t max1,min1,sum1,avg1;
+	size_t frame_sp = 0;
+	size_t frame_cb = 0;
+
+	if ((ad = ad_open_dev(NULL, samplerate)) == NULL)
+	E_FATAL("Failed to open audio device\n");
+	if (ad_start_rec(ad) < 0)
+	E_FATAL("Failed to start recording\n");
+
+	// Размеры блоков на входе кодера и после кодирования
+	frame_sp = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_ENCODER);
+	frame_cb = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_DECODER);
+
+	E_INFO("frame_sp = %x\n", frame_sp);
+	E_INFO("frame_cb = %x\n", frame_cb);
+
+	if ((frame_sp == 0) || (frame_cb == 0))
+		E_FATAL("Cannot determine IO size for codec %d\n", vocoder_identification);
+
+
+	// Инициализация библиотеки
+	status = vocoder_library_setup();
+	if (status)
+	{
+		E_FATAL("Can't setup frontend, status=%d\n", status);
+		return;
+	}
+
+	encoder = vocoder_create(vocoder_identification, VOCODER_DIRECTION_ENCODER);
+	if (encoder == NULL) {
+		E_FATAL("Can't create encoder\n");
+		vocoder_library_destroy();
+		return;
+	}
+
+	// Выделяем место под буффер
+	short * buffer = (short *)malloc(frame_sp);
+	unsigned char * c_frame = (unsigned char *)malloc(frame_cb);
+
+	if (buffer == 0 || c_frame == 0) {
+		E_FATAL("Can't allocate memory\n"); exit(1);
+	}
+
+	/* enable real-time mode */
+	if (rtmode) {
+		status = App_enableRealTime(rtmode);
+	
+		if (status < 0) {
+		    fprintf (stderr, "Can't enable real-time mode, status=%d\n", status);
+		}
+	}
+
+	E_INFO("Ready...\n");
+	max = 0; min = 0xFFFFFFFF; sum = 0; n_samples = 0; avg = 0;
+	//max1 =0; min1 = 0xFFFFFFFF; sum1 = 0; avg1=0;
+	while(ad_read(ad, buffer,frame_sp) == frame_sp )
+	{
+		gettimeofday(&tv0, NULL);
+		/* encoding  */
+		status = vocoder_process(encoder, c_frame, buffer);
+		if (status < 0 ) 
+		{
+			fprintf (stderr, "Encoder failed, status=%d\n", status);
+			break;
+		}
+		gettimeofday(&tv1, NULL);
+		/* decoding */
+//		status = vocoder_process(decoder, c_frame, buffer);
+//		if (status < 0 ) 
+//		{
+//			fprintf (stderr, "Decoder failed, status=%d\n", status);
+//			break;
+//		}
+//		gettimeofday(&tv2, NULL);
+		
+		/* calculate statistics */
+		sec = tv1.tv_sec - tv0.tv_sec;
+		usec = (sec * 1000000) + tv1.tv_usec;
+		delta = usec - tv0.tv_usec;
+		if (delta > max) max = delta;
+		if (delta < min) min = delta;
+		sum += delta;
+/*		
+		sec = tv2.tv_sec - tv1.tv_sec;
+		usec = (sec * 1000000) + tv2.tv_usec;
+		delta = usec - tv1.tv_usec;
+		if (delta > max1) max1 = delta;
+		if (delta < min1) min1 = delta;
+		sum1 += delta;
+*/
+		n_samples ++;
+		// TODO:
+		//fwrite(buffer,1,frame_sp,_out);
+	}
+	//    for (;;) {
+	//        if ((k = ad_read(ad, adbuf, 2048)) < 0)
+	//            E_FATAL("Failed to read audio\n");
+	//        
+	//        sleep_msec(100);
+	//    }
+	/* disable real-time mode */
+	if (rtmode) App_disableRealTime();
+	if (n_samples) {
+		avg = sum / n_samples;
+	//	avg1 = sum1 / n_samples;
+	}
+	E_INFO("encoding stat: min=%d us, max=%d us, avg=%d us samples=%d\n", min, max, avg, n_samples);
+	// Освобождаем память за собой
+	vocoder_free(encoder);
+	vocoder_library_destroy();
+	free(buffer);
+	free(c_frame);
+
+	ad_close(ad);
 }
 
 
@@ -179,20 +275,22 @@ main(int argc, char *argv[])
     
     E_INFO("%s COMPILED ON: %s, AT: %s\n\n", argv[0], __DATE__, __TIME__);
     
-    for (i=0; i<num_of_vocoders; i++)
-    {
-	if (!strcmp(argv[1], supported_vocoders[i].vocoder_string))
-	{
+    // Определяем тип вокодера и скорость
+    if(argc > 1){
+	for (i=0; i<num_of_vocoders; i++){
+	    if (!strcmp(argv[1], supported_vocoders[i].vocoder_string)){
 		vocoder_identification = supported_vocoders[i].vocoder_identification;
 		break;
+	    }
 	}
     }
     
     if (vocoder_identification == 0)
     {
-	fprintf (stderr, "Bad codec string, the following are supported: ");
-	for (i=0; i<num_of_vocoders; i++) fprintf(stderr, "%s ", 		supported_vocoders[i].vocoder_string);
-	fprintf(stderr, "\n");
+	E_INFO("Bad codec string, the following are supported:\n");
+	for (i=0; i<num_of_vocoders; i++)
+		E_INFO("%s\n", supported_vocoders[i].vocoder_string);
+		
 	return -1;
     }
     
