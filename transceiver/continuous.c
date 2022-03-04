@@ -12,10 +12,8 @@
 
 #include "vocoderAPI.h"
 #include <ctype.h>
-//#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
-//#include <string.h>
 #include <unistd.h>
 #include <sched.h>
 #include <sys/mman.h>
@@ -23,6 +21,11 @@
 #include <sys/time.h>
 #include <signal.h>
 #include <semaphore.h>
+
+#include <fcntl.h> // Contains file controls like O_RDWR
+#include <errno.h> // Error integer and strerror() function
+#include <termios.h> // Contains POSIX terminal control definitions
+#include <unistd.h> // write(), read(), close()
 
 typedef struct _vocoder_info {
 	const char* vocoder_string;
@@ -134,29 +137,27 @@ sleep_msec(int32 ms)
  */
 
 static void
-recognize_from_microphone(int samplerate, int vocoder_identification)
+recognize_from_microphone(int samplerate, int vocoder_identification, int tty_handle)
 {
 	ad_rec_t *ad;
-	//int16 adbuf[2048];
-	//int32 k;
 
 	void* encoder;
 	int status = 0;
 	
 	int rtmode = 0;
 	
-	struct timeval   tv0, tv1;// tv2;
+	struct timeval   tv0, tv1;
 	uint32_t  sec, usec;
 	uint32_t delta = 0;
 	uint32_t max, min, sum, avg, n_samples;
-//	uint32_t max1,min1,sum1,avg1;
 	size_t frame_sp = 0;
 	size_t frame_cb = 0;
+	size_t written_cb, spot_cb;
 
 	if ((ad = ad_open_dev(NULL, samplerate)) == NULL)
-	E_FATAL("Failed to open audio device\n");
+		E_FATAL("Failed to open audio device\n");
 	if (ad_start_rec(ad) < 0)
-	E_FATAL("Failed to start recording\n");
+		E_FATAL("Failed to start recording\n");
 
 	// Размеры блоков на входе кодера и после кодирования
 	frame_sp = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_ENCODER);
@@ -196,14 +197,14 @@ recognize_from_microphone(int samplerate, int vocoder_identification)
 	if (rtmode) {
 		status = App_enableRealTime(rtmode);
 	
-		if (status < 0) {
-		    fprintf (stderr, "Can't enable real-time mode, status=%d\n", status);
-		}
+		if (status < 0)
+		    E_FATAL("Can't enable real-time mode, status=%d\n", status);
 	}
 
+
 	E_INFO("Ready...\n");
+	
 	max = 0; min = 0xFFFFFFFF; sum = 0; n_samples = 0; avg = 0;
-	//max1 =0; min1 = 0xFFFFFFFF; sum1 = 0; avg1=0;
 	while(ad_read(ad, buffer,frame_sp) == frame_sp )
 	{
 		gettimeofday(&tv0, NULL);
@@ -211,18 +212,11 @@ recognize_from_microphone(int samplerate, int vocoder_identification)
 		status = vocoder_process(encoder, c_frame, buffer);
 		if (status < 0 ) 
 		{
-			fprintf (stderr, "Encoder failed, status=%d\n", status);
+			E_FATAL("Encoder failed, status=%d\n", status);
 			break;
 		}
 		gettimeofday(&tv1, NULL);
-		/* decoding */
-//		status = vocoder_process(decoder, c_frame, buffer);
-//		if (status < 0 ) 
-//		{
-//			fprintf (stderr, "Decoder failed, status=%d\n", status);
-//			break;
-//		}
-//		gettimeofday(&tv2, NULL);
+
 		
 		/* calculate statistics */
 		sec = tv1.tv_sec - tv0.tv_sec;
@@ -231,17 +225,22 @@ recognize_from_microphone(int samplerate, int vocoder_identification)
 		if (delta > max) max = delta;
 		if (delta < min) min = delta;
 		sum += delta;
-/*		
-		sec = tv2.tv_sec - tv1.tv_sec;
-		usec = (sec * 1000000) + tv2.tv_usec;
-		delta = usec - tv1.tv_usec;
-		if (delta > max1) max1 = delta;
-		if (delta < min1) min1 = delta;
-		sum1 += delta;
-*/
+
+
 		n_samples ++;
 		// TODO:
 		//fwrite(buffer,1,frame_sp,_out);
+		spot_cb = 0;
+		written_cb = 0;
+		do {
+    		spot_cb += write(tty_handle, &buffer[spot_cb], frame_cb);
+			written_cb += spot_cb;
+		} while (frame_cb == written_cb && spot_cb > 0);
+		
+		if (!(spot_cb > 0)){
+			E_FATAL("Write failed, return value=%d\n", spot_cb);
+		}
+		
 	}
 	//    for (;;) {
 	//        if ((k = ad_read(ad, adbuf, 2048)) < 0)
@@ -269,10 +268,12 @@ recognize_from_microphone(int samplerate, int vocoder_identification)
 int
 main(int argc, char *argv[])
 {
-    int samplerate = 16000;
+    int samplerate = 8000;
     int vocoder_identification = 0;
     int i, num_of_vocoders = sizeof(supported_vocoders) / sizeof(vocoder_info);
     
+	struct termios tty0; //, tty1;
+
     E_INFO("%s COMPILED ON: %s, AT: %s\n\n", argv[0], __DATE__, __TIME__);
     
     // Определяем тип вокодера и скорость
@@ -290,11 +291,45 @@ main(int argc, char *argv[])
 	E_INFO("Bad codec string, the following are supported:\n");
 	for (i=0; i<num_of_vocoders; i++)
 		E_INFO("%s\n", supported_vocoders[i].vocoder_string);
-		
-	return -1;
+		return -1;
     }
     
-    recognize_from_microphone(samplerate, vocoder_identification);
+	// Работа с COM-портом
+	int handle = open( "/dev/ttyUSB0", O_RDWR| O_NOCTTY );
+	memset (&tty0, 0, sizeof(tty0));
+
+	// Error Handling
+	if (tcgetattr ( handle, &tty0 ) != 0 ) {
+		E_FATAL("Error: %d from tcgetattr %s", errno, strerror(errno));
+	}
+
+	//tty1 = tty0;
+
+	// Set Baud Rate
+	cfsetospeed (&tty0, (speed_t)B9600);
+	cfsetispeed (&tty0, (speed_t)B9600);
+
+	// Setting other Port Stuff
+	tty0.c_cflag     &=  ~PARENB;            // Make 8n1
+	tty0.c_cflag     &=  ~CSTOPB;
+	tty0.c_cflag     &=  ~CSIZE;
+	tty0.c_cflag     |=  CS8;
+
+	tty0.c_cflag     &=  ~CRTSCTS;           // no flow control
+	tty0.c_cc[VMIN]   =  1;                  // read doesn't block
+	tty0.c_cc[VTIME]  =  5;                  // 0.5 seconds read timeout
+	tty0.c_cflag     |=  CREAD | CLOCAL;     // turn on READ & ignore ctrl lines
+
+	// Make raw
+	cfmakeraw(&tty0);
+
+	// Flush Port, then applies attributes
+	tcflush(handle, TCIFLUSH);
+	if (tcsetattr(handle, TCSANOW, &tty0) != 0) {
+   		E_FATAL("Error: %d from tcgetattr %s", errno, strerror(errno));
+	}
+
+    recognize_from_microphone(samplerate, vocoder_identification, handle);
     
     return 0;
 }
