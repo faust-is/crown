@@ -16,12 +16,15 @@ CFLAGS = $(CC_FLAGS_OS) $(MODE_$(MODE)) -DVOCODERLIB_USE_MELPE -DVOCODERLIB_USE_
 
 INCADD ?= -I../include -I../audiodev
 
-all: build continuous
+all: build continuous reciver
 
 build: ../$(MELP_SRC)/libmelpe.a ../TETRA/libtetra.a libvocoder_frontend.a
 
 continuous: continuous.o err.o filename.o ../frontend/vocoder_frontend.o
 	$(CC)  $(CFLAGS) $^ -o $@ -L../$(MELP_SRC) -L../TETRA -L../audiodev -lmelpe -lm -ltetra -laudiodev -Wl,-rpath=../audiodev
+	
+reciver: reciver.o ../frontend/vocoder_frontend.o
+	$(CC)  $(CFLAGS) $^ -o $@ -L../$(MELP_SRC) -L../TETRA -lmelpe -lm -ltetra
 
 libvocoder_frontend.a: ../frontend/vocoder_frontend.o
 	$(AR) -r $@ $^
