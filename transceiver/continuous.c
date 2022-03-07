@@ -187,7 +187,7 @@ recognize_from_microphone(int samplerate, int vocoder_identification, int tty_ha
 
 	// Выделяем место под буффер
 	short * buffer = (short *)malloc(frame_sp);
-	unsigned char * c_frame = (unsigned char *)malloc(frame_cb);
+	unsigned char * c_frame = (unsigned char *)malloc(sizeof(unsigned char)*frame_cb);
 
 	if (buffer == 0 || c_frame == 0) {
 		E_FATAL("Can't allocate memory\n"); exit(1);
@@ -205,7 +205,7 @@ recognize_from_microphone(int samplerate, int vocoder_identification, int tty_ha
 	E_INFO("Ready...\n");
 	
 	max = 0; min = 0xFFFFFFFF; sum = 0; n_samples = 0; avg = 0;
-	while(ad_read(ad, buffer,frame_sp) == frame_sp )
+	while(ad_read(ad, buffer,frame_sp) == frame_sp)
 	{
 		gettimeofday(&tv0, NULL);
 		/* encoding  */
@@ -226,21 +226,19 @@ recognize_from_microphone(int samplerate, int vocoder_identification, int tty_ha
 		if (delta < min) min = delta;
 		sum += delta;
 
-
-		n_samples ++;
-		// TODO:
-		//fwrite(buffer,1,frame_sp,_out);
 		spot_cb = 0;
 		written_cb = 0;
 		do {
-    		spot_cb += write(tty_handle, &buffer[spot_cb], frame_cb);
+    		spot_cb = write(tty_handle, &c_frame[spot_cb], frame_cb - spot_cb);
+			//printf("spot: %d n: %d\n",written_cb, spot_cb);
 			written_cb += spot_cb;
-		} while (frame_cb == written_cb && spot_cb > 0);
+		} while (frame_cb != written_cb && spot_cb > 0);
 		
 		if (!(spot_cb > 0)){
 			E_FATAL("Write failed, return value=%d\n", spot_cb);
 		}
 		
+		n_samples ++;
 	}
 	//    for (;;) {
 	//        if ((k = ad_read(ad, adbuf, 2048)) < 0)
@@ -254,14 +252,17 @@ recognize_from_microphone(int samplerate, int vocoder_identification, int tty_ha
 		avg = sum / n_samples;
 	//	avg1 = sum1 / n_samples;
 	}
+
 	E_INFO("encoding stat: min=%d us, max=%d us, avg=%d us samples=%d\n", min, max, avg, n_samples);
-	// Освобождаем память за собой
-	vocoder_free(encoder);
-	vocoder_library_destroy();
-	free(buffer);
-	free(c_frame);
 
 	ad_close(ad);
+
+	// Освобождаем память за собой
+	vocoder_free(encoder);
+	free(buffer);
+	free(c_frame);
+	vocoder_library_destroy();
+
 }
 
 
@@ -319,6 +320,7 @@ main(int argc, char *argv[])
 	tty0.c_cc[VMIN]   =  1;                  // read doesn't block
 	tty0.c_cc[VTIME]  =  5;                  // 0.5 seconds read timeout
 	tty0.c_cflag     |=  CREAD | CLOCAL;     // turn on READ & ignore ctrl lines
+
 
 	// Make raw
 	cfmakeraw(&tty0);
