@@ -135,6 +135,7 @@ main (int argc, char** argv)
             fwrite(buffer,1,frame_sp,_out);
             fflush(_out);
 
+            n_samples++;
             spot = 0;
         }
 
@@ -149,6 +150,8 @@ main (int argc, char** argv)
       fflush(_out);
     }
 */
+    fclose(handle);
+
     vocoder_free(dec);
     free(buffer);
     free(c_frame);

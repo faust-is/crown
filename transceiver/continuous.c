@@ -163,8 +163,8 @@ recognize_from_microphone(int samplerate, int vocoder_identification, int tty_ha
 	frame_sp = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_ENCODER);
 	frame_cb = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_DECODER);
 
-	E_INFO("frame_sp = %x\n", frame_sp);
-	E_INFO("frame_cb = %x\n", frame_cb);
+	E_INFO("frame_sp = %d\n", frame_sp);
+	E_INFO("frame_cb = %d\n", frame_cb);
 
 	if ((frame_sp == 0) || (frame_cb == 0))
 		E_FATAL("Cannot determine IO size for codec %d\n", vocoder_identification);
@@ -331,6 +331,7 @@ main(int argc, char *argv[])
 
     recognize_from_microphone(samplerate, vocoder_identification, handle);
     
+	fclose(handle);
     return 0;
 }
 
