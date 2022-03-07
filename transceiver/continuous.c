@@ -149,7 +149,7 @@ recognize_from_microphone(int samplerate, int vocoder_identification, int tty_ha
 	struct timeval   tv0, tv1;
 	uint32_t  sec, usec;
 	uint32_t delta = 0;
-	uint32_t max, min, sum, avg, n_samples;
+	uint32_t max, min, sum, avg, n_samples, n_frames;
 	size_t frame_sp = 0;
 	size_t frame_cb = 0;
 	size_t written_cb, spot_cb;
@@ -204,8 +204,10 @@ recognize_from_microphone(int samplerate, int vocoder_identification, int tty_ha
 
 	E_INFO("Ready...\n");
 	
-	max = 0; min = 0xFFFFFFFF; sum = 0; n_samples = 0; avg = 0;
-	while(ad_read(ad, buffer,frame_sp) == frame_sp)
+	max = 0; min = 0xFFFFFFFF; sum = 0; n_frames = 0; avg = 0; n_samples = frame_sp / sizeof(short);
+	
+
+	while(ad_read(ad, buffer,n_samples) == n_samples)
 	{
 		gettimeofday(&tv0, NULL);
 		/* encoding  */
@@ -238,7 +240,7 @@ recognize_from_microphone(int samplerate, int vocoder_identification, int tty_ha
 			E_FATAL("Write failed, return value=%d\n", spot_cb);
 		}
 		
-		n_samples ++;
+		n_frames ++;
 	}
 	//    for (;;) {
 	//        if ((k = ad_read(ad, adbuf, 2048)) < 0)
@@ -248,12 +250,12 @@ recognize_from_microphone(int samplerate, int vocoder_identification, int tty_ha
 	//    }
 	/* disable real-time mode */
 	if (rtmode) App_disableRealTime();
-	if (n_samples) {
-		avg = sum / n_samples;
+	if (n_frames) {
+		avg = sum / n_frames;
 	//	avg1 = sum1 / n_samples;
 	}
 
-	E_INFO("encoding stat: min=%d us, max=%d us, avg=%d us samples=%d\n", min, max, avg, n_samples);
+	E_INFO("encoding stat: min=%d us, max=%d us, avg=%d us frames=%d\n", min, max, avg, n_frames);
 
 	ad_close(ad);
 
