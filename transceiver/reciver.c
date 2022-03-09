@@ -45,7 +45,7 @@ main (int argc, char** argv)
             if (!strcmp(argv[1], supported_vocoders[i].vocoder_string))
             {
                 vocoder_identification = supported_vocoders[i].vocoder_identification;
-                printf("%s\n",supported_vocoders[i].vocoder_string);
+//                printf("%s\n",supported_vocoders[i].vocoder_string);
                 break;
             }
         }
@@ -58,8 +58,7 @@ main (int argc, char** argv)
         }
     } else {
         vocoder_identification = TETRA_RATE_4800;
-        // TODO:
-        printf("%s\n", TETRA_RATE_4800_STR);
+//        printf("%s\n", TETRA_RATE_4800_STR);
     }
 
     frame_sp = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_ENCODER);
@@ -85,7 +84,7 @@ main (int argc, char** argv)
 
     // Работа с COM-портом
     struct termios tty0;
-	int handle = open( "/dev/ttyUSB0", O_RDWR| O_NOCTTY );
+	int handle = open("/dev/ttyUSB0", O_RDWR| O_NOCTTY );
 	memset (&tty0, 0, sizeof(tty0));
 
 	// Error Handling
@@ -111,6 +110,8 @@ main (int argc, char** argv)
 	tty0.c_cc[VTIME]  =  5;                  // 0.5 seconds read timeout
 	tty0.c_cflag     |=  CREAD | CLOCAL;     // turn on READ & ignore ctrl lines
 
+//  tty0.c_lflag &= ~(ECHO|ICANON|ISIG)
+
 	// Make raw
 	cfmakeraw(&tty0);
 
@@ -121,35 +122,35 @@ main (int argc, char** argv)
         return -1;
 	}
 
-    printf("Ready...\n");
+//    printf("Ready...\n");
 
     int n = 0, spot = 0;
     n_samples = 0;
     do {
-        n = read(handle, &c_frame[n], frame_cbit - n);
-        //sprintf( &response[spot], "%c", buf );
-        spot += n;
+        n = read(handle, &c_frame[n], frame_cbit - spot);
 
+//      printf("spot: %d n: %d", spot,n);
+
+        spot += n;
         if(spot == frame_cbit){
+//            for (int i = 0; i < spot; i++)
+//                printf("%02X",c_frame[i]);
+//            printf("\n");
+            
             vocoder_process(dec, c_frame, buffer);
             fwrite(buffer,1,frame_sp,_out);
             fflush(_out);
 
             n_samples++;
-            spot = 0;
+            spot = 0; n = 0;
+//          printf("\nn_frame: %d\n",n_samples);
         }
 
     } while(n > 0);
 
     //E_INFO("decoding stat: min=%d us, max=%d us, avg=%d us samples=%d\n", min, max, avg, n_samples);
     printf("decoding stat: samples=%d\n", n_samples);
- /*   while( fread(c_frame,sizeof(unsigned char),frame_cbit,_in) == frame_cbit )
-    {
-      vocoder_process(dec, c_frame, buffer);
-      fwrite(buffer,1,frame_sp,_out);
-      fflush(_out);
-    }
-*/
+
     fclose(handle);
 
     vocoder_free(dec);
