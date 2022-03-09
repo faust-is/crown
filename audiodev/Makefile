@@ -40,6 +40,7 @@ all: ${TARGET}
 $(TARGET): $(OBJECTS)
 	$(CC) ${LDFLAGS} -o $@ $^ -lpulse-simple
 #	$(CC) ${LDFLAGS} -o $@ $^ #для OSS
+#	$(CC) ${LDFLAGS} -o $@ $^ -lasound #для ALSA
 
 $(SOURCES:.c=.d):%.d:%.c
 	$(CC) $(CFLAGS) -MM $< >$@
