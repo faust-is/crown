@@ -3,7 +3,7 @@ LD ?= gcc
 LIBDIR ?= /usr/lib
 INST ?= install -pD -m 644
 
-MELP_SRC ?= melp_fp
+MELP_SRC ?= melpe_fxp
 #melpe_fxp or melp_fp
 
 # NORMAL DEBUG

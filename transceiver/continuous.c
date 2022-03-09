@@ -154,6 +154,8 @@ recognize_from_microphone(int samplerate, int vocoder_identification, int tty_ha
 	size_t frame_cb = 0;
 	size_t written_cb, spot_cb;
 
+	E_INFO("samplerate = %d\n",samplerate);
+	
 	if ((ad = ad_open_dev(NULL, samplerate)) == NULL)
 		E_FATAL("Failed to open audio device\n");
 	if (ad_start_rec(ad) < 0)
@@ -193,24 +195,29 @@ recognize_from_microphone(int samplerate, int vocoder_identification, int tty_ha
 		E_FATAL("Can't allocate memory\n"); exit(1);
 	}
 
-	/* enable real-time mode */
+	// enable real-time mode
 	if (rtmode) {
 		status = App_enableRealTime(rtmode);
 	
 		if (status < 0)
 		    E_FATAL("Can't enable real-time mode, status=%d\n", status);
 	}
-
-
-	E_INFO("Ready...\n");
 	
 	max = 0; min = 0xFFFFFFFF; sum = 0; n_frames = 0; avg = 0; n_samples = frame_sp / sizeof(short);
 	
+	E_INFO("n_samples: %d\n",n_samples);
+	E_INFO("Ready...\n");
+
+//	FILE * _out = fopen("test.wav","w");
+//	if( _out == NULL){
+//		fprintf (stderr, "Can't open output\n");
+//		return -1;
+//	}
 
 	while(ad_read(ad, buffer,n_samples) == n_samples)
 	{
 		gettimeofday(&tv0, NULL);
-		/* encoding  */
+		// encoding
 		status = vocoder_process(encoder, c_frame, buffer);
 		if (status < 0 ) 
 		{
@@ -219,8 +226,7 @@ recognize_from_microphone(int samplerate, int vocoder_identification, int tty_ha
 		}
 		gettimeofday(&tv1, NULL);
 
-		
-		/* calculate statistics */
+		// calculate statistics
 		sec = tv1.tv_sec - tv0.tv_sec;
 		usec = (sec * 1000000) + tv1.tv_usec;
 		delta = usec - tv0.tv_usec;
@@ -230,29 +236,34 @@ recognize_from_microphone(int samplerate, int vocoder_identification, int tty_ha
 
 		spot_cb = 0;
 		written_cb = 0;
+
+//		fwrite(buffer,1,frame_sp,_out);
+
 		do {
     		spot_cb = write(tty_handle, &c_frame[spot_cb], frame_cb - spot_cb);
-			//printf("spot: %d n: %d\n",written_cb, spot_cb);
+//			printf("spot: %d n: %d\n",written_cb, spot_cb);
+//			for (int i = 0; i < spot_cb; i++){
+//				printf("%02X",c_frame[i]);
+//			}
+//			printf("\n");
+
 			written_cb += spot_cb;
 		} while (frame_cb != written_cb && spot_cb > 0);
 		
 		if (!(spot_cb > 0)){
 			E_FATAL("Write failed, return value=%d\n", spot_cb);
 		}
-		
+
 		n_frames ++;
+		if(n_frames >= 400) break;
 	}
-	//    for (;;) {
-	//        if ((k = ad_read(ad, adbuf, 2048)) < 0)
-	//            E_FATAL("Failed to read audio\n");
-	//        
-	//        sleep_msec(100);
-	//    }
-	/* disable real-time mode */
+
+//	fclose(_out);
+
+	// disable real-time mode
 	if (rtmode) App_disableRealTime();
 	if (n_frames) {
 		avg = sum / n_frames;
-	//	avg1 = sum1 / n_samples;
 	}
 
 	E_INFO("encoding stat: min=%d us, max=%d us, avg=%d us frames=%d\n", min, max, avg, n_frames);
@@ -264,7 +275,6 @@ recognize_from_microphone(int samplerate, int vocoder_identification, int tty_ha
 	free(buffer);
 	free(c_frame);
 	vocoder_library_destroy();
-
 }
 
 
