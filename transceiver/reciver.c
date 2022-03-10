@@ -146,7 +146,7 @@ main (int argc, char** argv)
 //          printf("\nn_frame: %d\n",n_samples);
         }
 
-    } while(n > 0);
+    } while(n >= 0);
 
     //E_INFO("decoding stat: min=%d us, max=%d us, avg=%d us samples=%d\n", min, max, avg, n_samples);
     printf("decoding stat: samples=%d\n", n_samples);

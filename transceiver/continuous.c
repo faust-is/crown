@@ -218,7 +218,7 @@ recognize_from_microphone(int samplerate, int vocoder_identification, int tty_ha
 	{
 		gettimeofday(&tv0, NULL);
 		// encoding
-		status = vocoder_process(encoder, c_frame, buffer);
+		status = vocoder_process(encoder, c_frame, buffer);		
 		if (status < 0 ) 
 		{
 			E_FATAL("Encoder failed, status=%d\n", status);
@@ -233,14 +233,13 @@ recognize_from_microphone(int samplerate, int vocoder_identification, int tty_ha
 		if (delta > max) max = delta;
 		if (delta < min) min = delta;
 		sum += delta;
+//		fwrite(buffer,1,frame_sp,_out);
 
 		spot_cb = 0;
 		written_cb = 0;
 
-//		fwrite(buffer,1,frame_sp,_out);
-
 		do {
-    		spot_cb = write(tty_handle, &c_frame[spot_cb], frame_cb - spot_cb);
+    		spot_cb = write(tty_handle, &c_frame[written_cb], frame_cb - written_cb);
 //			printf("spot: %d n: %d\n",written_cb, spot_cb);
 //			for (int i = 0; i < spot_cb; i++){
 //				printf("%02X",c_frame[i]);
@@ -329,11 +328,12 @@ main(int argc, char *argv[])
 	tty0.c_cflag     |=  CS8;
 
 	tty0.c_cflag     &=  ~CRTSCTS;           // no flow control
-	tty0.c_cc[VMIN]   =  1;                  // read doesn't block
-	tty0.c_cc[VTIME]  =  5;                  // 0.5 seconds read timeout
+	tty0.c_cc[VMIN]   =  1;                  // (1) read doesn't block
+	tty0.c_cc[VTIME]  =  5;                  // (5) 0.5 seconds read timeout
 	tty0.c_cflag     |=  CREAD | CLOCAL;     // turn on READ & ignore ctrl lines
 
-
+//	tty0.c_lflag &= ~(ECHO|ICANON|ISIG);
+//	tty0.c_iflag &= ~(IXON | IXOFF | IXANY);
 	// Make raw
 	cfmakeraw(&tty0);
 
