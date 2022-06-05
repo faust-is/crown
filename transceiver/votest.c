@@ -94,6 +94,30 @@ static int App_disableRealTime(void)
 	return(status);
 }
 
+static int
+check_wav_header(char *header, int expected_sr)
+{
+    int sr;
+
+    if (header[34] != 0x10) {
+        printf("Input audio file has [%d] bits per sample instead of 16\n", header[34]);
+        return 0;
+    }
+    if (header[20] != 0x1) {
+        printf("Input audio file has compression [%d] and not required PCM\n", header[20]);
+        return 0;
+    }
+    if (header[22] != 0x1) {
+        printf("Input audio file has [%d] channels, expected single channel mono\n", header[22]);
+        return 0;
+    }
+    sr = ((header[24] & 0xFF) | ((header[25] & 0xFF) << 8) | ((header[26] & 0xFF) << 16) | ((header[27] & 0xFF) << 24));
+    if (sr != expected_sr) {
+        printf("Input audio file has sample rate [%d], but decoder expects [%d]\n", sr, expected_sr);
+        return 0;
+    }
+    return 1;
+}
 int
 main (int argc, char **argv)
 {
@@ -114,7 +138,7 @@ main (int argc, char **argv)
 	int i, num_of_vocoders = sizeof(supported_vocoders) / sizeof(vocoder_info);
 	
 	
-printf("Vocoders v1.0\n");
+	printf("Vocoders v1.0\n");
 	if (argc !=4 && argc !=5) {
 		printf("usage: %s codec_string input_pcm output_pcm [RT prio=0]\n", argv[0]);
 		return 0;
@@ -136,8 +160,8 @@ printf("Vocoders v1.0\n");
 	}
 	frame_sp = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_ENCODER);
 	frame_cb = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_DECODER);
-printf("frame_sp = %x\n", frame_sp);
-printf("frame_cb = %x\n", frame_cb);
+	printf("frame_sp = %x\n", frame_sp);
+	printf("frame_cb = %x\n", frame_cb);
 	if ((frame_sp == 0) || (frame_cb == 0)) {
 		fprintf (stderr, "Cannot determine IO size for codec %d\n", vocoder_identification);
 		return -1;
@@ -168,6 +192,16 @@ printf("frame_cb = %x\n", frame_cb);
 		fprintf (stderr, "Can't open output\n");
 		return -1;
 	}
+
+	// Проверяем наличие заголовка, а также валидность входных аудиоданных
+	char waveheader[44];
+	fread(waveheader,1,44,_in);
+	if(!check_wav_header(waveheader,8000)){
+		fprintf(stderr,"Failed to process file %s due to format mismatch.\n",in_file);
+		return -1;
+	}
+	// Заголовок второго файла будет точно таким же
+	fwrite(waveheader,1,44,_out);
 
 	status = vocoder_library_setup();
 	if (status)
