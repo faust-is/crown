@@ -43,7 +43,7 @@
 
 static void 
 usage(void) {
-	printf("\t-m if you want use microphone\nn");
+	printf("\t-m if you want use microphone\n");
 	printf("\t-f <filename>\n");
 	printf("\t-c <MELPE_1200\" or \"TETRA_4800\">\n");
 	printf("\t-l <s> interval time\n");
@@ -93,8 +93,6 @@ main(int argc, char *argv[])
 	FILE *fd = NULL;
 	ad_rec_t *ad = NULL;
 
-	
-
     int samplerate = 8000;
     int opt; 
     
@@ -102,6 +100,10 @@ main(int argc, char *argv[])
 
     E_INFO("%s COMPILED ON: %s, AT: %s\n\n", argv[0], __DATE__, __TIME__);
     
+	if(argc == 1){
+		usage();
+		return 3;
+	}	
 
 	// Разбор параметров командной строки
 	while ((opt = getopt(argc, argv, "c:f:ml:")) != EOF) {
