@@ -198,7 +198,7 @@ main(int argc, char *argv[])
 	}
 
 	if (fd) {
-        //recognize_from_file(fd, vocoder_identification, handle);
+        recognize_from_file(fd, 8000, config.vocoder_identification, handle);
     }else if(ad) {
         recognize_from_microphone(ad, config.vocoder_identification, handle);
 	}else{

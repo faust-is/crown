@@ -24,7 +24,7 @@ static int status = 0, rtmode = 0;
 static struct timeval   tv0, tv1;
 static uint32_t  sec, usec;
 static uint32_t delta = 0;
-static uint32_t max, min, sum, avg, n_samples, n_frames;
+static uint32_t max, min, sum, avg, n_samples, n_blocks;
 
 // Размеры блоков на входе кодера и после кодирования
 static size_t frame_sp = 0, frame_cb = 0;
@@ -148,8 +148,6 @@ recognize_from_file(FILE * rawfd, int samplerate, int vocoder_identification, in
 		if (!check_wav_header(waveheader, samplerate))
     	    E_FATAL("Failed to process file due to format mismatch.\n");
     //}
-
-
     
 	// Размеры блоков на входе кодера и после кодирования
 	frame_sp = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_ENCODER);
@@ -193,7 +191,7 @@ recognize_from_file(FILE * rawfd, int samplerate, int vocoder_identification, in
 		    E_FATAL("Can't enable real-time mode, status=%d\n", status);
 	}
 	
-	max = 0; min = 0xFFFFFFFF; sum = 0; n_frames = 0; avg = 0; n_samples = frame_sp / sizeof(short);
+	max = 0; min = 0xFFFFFFFF; sum = 0; n_blocks = 0; avg = 0; n_samples = frame_sp / sizeof(short);
 	
 	E_INFO("n_samples: %d\n",n_samples);
 	E_INFO("Ready...\n");
@@ -231,15 +229,17 @@ recognize_from_file(FILE * rawfd, int samplerate, int vocoder_identification, in
 		if (!(spot_cb > 0)){
 			E_FATAL("Write failed, return value=%d\n", spot_cb);
 		}
+
+        n_blocks ++;
 	}
 
 	// disable real-time mode
 	if (rtmode) App_disableRealTime();
-	if (n_frames) {
-		avg = sum / n_frames;
+	if (n_blocks) {
+		avg = sum / n_blocks;
 	}
 
-	E_INFO("encoding stat: min=%d us, max=%d us, avg=%d us frames=%d\n", min, max, avg, n_frames);
+	E_INFO("encoding stat: min=%d us, max=%d us, avg=%d us blocks=%d\n", min, max, avg, n_blocks);
 
 	fclose(rawfd);
 
@@ -315,7 +315,7 @@ recognize_from_microphone(ad_rec_t *ad, int vocoder_identification, int tty_hand
 		    E_FATAL("Can't enable real-time mode, status=%d\n", status);
 	}
 	
-	max = 0; min = 0xFFFFFFFF; sum = 0; n_frames = 0; avg = 0; n_samples = frame_sp / sizeof(short);
+	max = 0; min = 0xFFFFFFFF; sum = 0; n_blocks = 0; avg = 0; n_samples = frame_sp / sizeof(short);
 	
 	E_INFO("n_samples: %d\n",n_samples);
 	E_INFO("Ready...\n");
@@ -358,17 +358,17 @@ recognize_from_microphone(ad_rec_t *ad, int vocoder_identification, int tty_hand
 			E_FATAL("Write failed, return value=%d\n", spot_cb);
 		}
 
-		n_frames ++;
-		if(n_frames >= 300) break;
+		n_blocks ++;
+		if(n_blocks >= 300) break;
 	}
 
 	// disable real-time mode
 	if (rtmode) App_disableRealTime();
-	if (n_frames) {
-		avg = sum / n_frames;
+	if (n_blocks) {
+		avg = sum / n_blocks;
 	}
 
-	E_INFO("encoding stat: min=%d us, max=%d us, avg=%d us frames=%d\n", min, max, avg, n_frames);
+	E_INFO("encoding stat: min=%d us, max=%d us, avg=%d us frames=%d\n", min, max, avg, n_blocks);
 
 	ad_close(ad);
 
