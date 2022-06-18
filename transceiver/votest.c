@@ -160,8 +160,8 @@ main (int argc, char **argv)
 	}
 	frame_sp = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_ENCODER);
 	frame_cb = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_DECODER);
-	printf("frame_sp = %x\n", frame_sp);
-	printf("frame_cb = %x\n", frame_cb);
+	printf("frame_sp = %d\n", frame_sp);
+	printf("frame_cb = %d\n", frame_cb);
 	if ((frame_sp == 0) || (frame_cb == 0)) {
 		fprintf (stderr, "Cannot determine IO size for codec %d\n", vocoder_identification);
 		return -1;

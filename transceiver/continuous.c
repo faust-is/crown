@@ -31,6 +31,8 @@
 #include "ini.h"
 #include "handler.h"
 
+#define CHANNEL_FL_STR "C1_FL"
+#define CHANNEL_TH_STR "C1_TH"
 
 /*
  * Main utterance processing loop:
@@ -44,8 +46,8 @@
 static void 
 usage(void) {
 	printf("\t-m if you want use microphone\n");
-	printf("\t-f <filename>\n");
-	printf("\t-c <MELPE_1200\" or \"TETRA_4800\">\n");
+	printf("\t-f <filename> if you want load WAV-file\n");
+	printf("\t-c <\"%s\" or \"%s\">\n",CHANNEL_FL_STR, CHANNEL_TH_STR);
 	printf("\t-l <s> interval time\n");
 }
 
@@ -66,7 +68,7 @@ handler(void* user, const char* section, const char* name,const char* value)
 
 	if (MATCH(pconfig->channel, "port")) {
         pconfig->port = strdup(value);
-    } else if (strcmp(pconfig->channel, "C1_FL") == 0 && MATCH(pconfig->channel, "rate")) {
+    } else if (strcmp(pconfig->channel, CHANNEL_FL_STR) == 0 && MATCH(pconfig->channel, "rate")) {
 		int n = sizeof(supported_vocoders) / sizeof(vocoder_info);
 		for (int i = 0; i < n; i++){
 			if (!strcmp(value, supported_vocoders[i].vocoder_string)){
@@ -93,8 +95,8 @@ main(int argc, char *argv[])
 	FILE *fd = NULL;
 	ad_rec_t *ad = NULL;
 
-    int samplerate = 8000;
-    int opt; 
+    int opt, samplerate = 8000;
+
     
 	struct termios tty0, tty1;
 
@@ -111,7 +113,7 @@ main(int argc, char *argv[])
 		case 'c': // считываем канал: ТЧ/ФЛ
 		{
 			
-			if(!strcmp(optarg, "C1_FL") && !strcmp(optarg, "C1_TH"))
+			if(!strcmp(optarg, CHANNEL_FL_STR ) && !strcmp(optarg, CHANNEL_TH_STR ))
 				E_FATAL("Unknow channel % s.\n",opt);
 
 			config.channel = strdup(optarg);
@@ -119,7 +121,6 @@ main(int argc, char *argv[])
 		}
 		case 'f': // чтение потока из файла
 		{
-			printf("TODO:2\n");
     		if ((fd = fopen(optarg, "rb")) == NULL)
         		E_FATAL_SYSTEM("Failed to open file '%s' for reading", optarg);
 
@@ -168,7 +169,7 @@ main(int argc, char *argv[])
 
 	tty1 = tty0;
 
-	if (!strcmp(config.channel, "C1_FL"))
+	if (!strcmp(config.channel, CHANNEL_FL_STR))
 	{
 		// Set Baud Rate
 		cfsetospeed (&tty0, (speed_t)B9600);
@@ -198,7 +199,7 @@ main(int argc, char *argv[])
 	}
 
 	if (fd) {
-        recognize_from_file(fd, 8000, config.vocoder_identification, handle);
+        recognize_from_file(fd, samplerate, config.vocoder_identification, handle);
     }else if(ad) {
         recognize_from_microphone(ad, config.vocoder_identification, handle);
 	}else{
@@ -206,6 +207,9 @@ main(int argc, char *argv[])
     }
     
 	fclose(handle);
+	free(config.port);
+	free(config.channel);
+
     return 0;
 }
 
