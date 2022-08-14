@@ -14,6 +14,10 @@ int write_wav_stereo_header(FILE *_out, int32_t sample_rate, int32_t frame_count
     
     size_t write_count;
     
+    if(_out == NULL)
+        return -1;
+
+
     subchunk2_size  = frame_count * NUM_CHANNELS * BITS_PER_SAMPLE / 8;
     chunk_size      = 4 + (8 + SUBCHUNK1SIZE) + (8 + subchunk2_size);
     
