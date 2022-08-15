@@ -21,16 +21,18 @@ typedef struct wavfile_header_s
     int32_t Subchunk2Size;
 } wavfile_header_t;
 
-/*Standard values for CD-quality audio*/
+// TODO: бывает 18
 #define SUBCHUNK1SIZE   (16)
 #define AUDIO_FORMAT_PCM    (1) /*For PCM*/
+#define AUDIO_FORMAT_ALAW    (6) /*For A-law*/
 #define NUM_CHANNELS    (1)
 #define SAMPLE_RATE     (8000)
 
-#define BITS_PER_SAMPLE (16)
+//#define BITS_PER_SAMPLE (16)
+//#define BITS_PER_SAMPLE (AUDIO_FORMAT) AUDIO_FORMAT == AUDIO_FORMAT_PCM?
 
-#define BYTE_RATE       (SAMPLE_RATE * NUM_CHANNELS * BITS_PER_SAMPLE / 8)
-#define BLOCK_ALIGN     (NUM_CHANNELS * BITS_PER_SAMPLE / 8)
+//#define BYTE_RATE       (SAMPLE_RATE * NUM_CHANNELS * BITS_PER_SAMPLE / 8)
+//#define BLOCK_ALIGN     (NUM_CHANNELS * BITS_PER_SAMPLE / 8)
 
 int write_wav_stereo_header(FILE *_out, int32_t sample_rate, int32_t frame_count, int16_t audio_format);
 

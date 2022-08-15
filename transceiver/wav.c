@@ -17,8 +17,10 @@ int write_wav_stereo_header(FILE *_out, int32_t sample_rate, int32_t frame_count
     if(_out == NULL)
         return -1;
 
+    // TODO: only pcm and A-Law
+    uint16_t bits_per_sample = (audio_format == AUDIO_FORMAT_ALAW)? 8:16;
 
-    subchunk2_size  = frame_count * NUM_CHANNELS * BITS_PER_SAMPLE / 8;
+    subchunk2_size  = frame_count * NUM_CHANNELS * bits_per_sample / 8;
     chunk_size      = 4 + (8 + SUBCHUNK1SIZE) + (8 + subchunk2_size);
     
     wav_header.ChunkID[0] = 'R';
@@ -42,9 +44,9 @@ int write_wav_stereo_header(FILE *_out, int32_t sample_rate, int32_t frame_count
     wav_header.AudioFormat = audio_format;
     wav_header.NumChannels = NUM_CHANNELS;
     wav_header.SampleRate = sample_rate;
-    wav_header.ByteRate = BYTE_RATE;
-    wav_header.BlockAlign = BLOCK_ALIGN;
-    wav_header.BitsPerSample = BITS_PER_SAMPLE;
+    wav_header.ByteRate = sample_rate*NUM_CHANNELS*bits_per_sample / 8;// (SAMPLE_RATE * NUM_CHANNELS * BITS_PER_SAMPLE / 8)
+    wav_header.BlockAlign = NUM_CHANNELS * bits_per_sample / 8;//(NUM_CHANNELS * BITS_PER_SAMPLE / 8)
+    wav_header.BitsPerSample = bits_per_sample;
     
     wav_header.Subchunk2ID[0] = 'd';
     wav_header.Subchunk2ID[1] = 'a';

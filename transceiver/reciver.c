@@ -177,16 +177,22 @@ main (int argc, char** argv)
 
         buffer = (short *)malloc(frame_sp);
         c_frame = (unsigned char *)malloc(sizeof(unsigned char)*frame_cbit);
+
+        int h = write_wav_stereo_header(_out, SAMPLE_RATE, SAMPLE_RATE * (int32_t)t , AUDIO_FORMAT_PCM);
+        if (h != 0){
+            E_WARN("output *.wav file is false\n");
+            /* code */
+        }
     }else{
-        // TODO: С1-ТЧ
+        
+        int h = write_wav_stereo_header(_out, SAMPLE_RATE, SAMPLE_RATE * (int32_t)t , AUDIO_FORMAT_ALAW);
+        if (h != 0){
+            E_WARN("output *.wav file is false\n");
+            /* code */
+        }
     }
 
-    int h = write_wav_stereo_header(_out, SAMPLE_RATE, SAMPLE_RATE * (int32_t)t , 1);
-    if (h != 0)
-    {
-        E_WARN("output *.wav file is false\n");
-        /* code */
-    }
+
     
 
 
@@ -370,28 +376,37 @@ main (int argc, char** argv)
                 goto out;
             }
 
+            c_frame = (unsigned char *)malloc(sizeof(unsigned char)*size);
+
             // 3. тело фрейма
             count = 0; code = 0;
             do {
                 // TODO: malloc для буффера
-                s = read(handle, &command, 1);
+                s = read(handle, &c_frame[count], 1);
                 if (s < 1) {
+                    free(c_frame);
                     E_INFO("Error reading frame body: %d из %d\n",count,size);
                     goto out;
                 }
 
+                code += c_frame[count];
                 count += s;
-                code += command[0];
+                
             } while(count < size - 1);
 
             // 4. контрольная сумма - дополнение до двух
-            s = read(handle, &command, 1);
-            if((s < 1) || (command[0] != (UINT8_MAX - code + 1))){
-                
-                E_INFO("Error check sum: %x vs %x\n",command[0], UINT8_MAX - code + 1); // ~code+1
+            s = read(handle, &c_frame[count], 1);
+            if((s < 1) || (c_frame[count] != (0xFF & (UINT8_MAX - code + 1)))){
+                free(c_frame);
+                E_INFO("Error check sum: %x vs %x\n",c_frame[count], UINT8_MAX - code + 1); // ~code+1
                 goto out;
             }
+            // запись в WAV-file блока данных
+            // fwrite(c_frame,1,size-1,_out);
+            fwrite(&c_frame[4],1,size-1-4,_out);
+            fflush(_out);
 
+            free(c_frame);
             E_INFO("frame read successfully, size %d\n",size);
 
         }while (TRUE);
