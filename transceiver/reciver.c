@@ -2,54 +2,22 @@
 #include "err.h"
 #include <vocoderAPI.h>
 #include <ctype.h>
-//#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
 #include <stdint.h>
 
 #include <fcntl.h> // Contains file controls like O_RDWR
 #include <errno.h> // Error integer and strerror() function
 #include <termios.h> // Contains POSIX terminal control definitions
 #include <unistd.h> // write(), read(), close()
-
-/*
-typedef struct _vocoder_info {
-    const char* vocoder_string;
-    short vocoder_identification;
-} vocoder_info;
-
-vocoder_info supported_vocoders[] = {
-    {MELPE_RATE_2400_STR, MELPE_RATE_2400},
-    {MELPE_RATE_1200_STR, MELPE_RATE_1200},
-    {TETRA_RATE_4800_STR, TETRA_RATE_4800},
-    {TETRA_RATE_4666_STR, TETRA_RATE_4666},
-    // add more vocoders here!
-};
-*/
-
 #include <getopt.h>
+#include <math.h>
 #include "ini.h"
 #include "handler.h"
+#include "convert.h"
 
 #define CHANNEL_FL_STR "C1_FL"
 #define CHANNEL_TH_STR "C1_TH"
-
-/*
- * Main utterance processing loop:
- *     for (;;) {
- *        start utterance and wait for speech to process
- *        decoding till end-of-utterance silence will be detected
- *        print utterance result;
- *     }
- */
-
-static void 
-usage(void) {
-	printf("\t-f <filename> if you want save WAV-file\n");
-	printf("\t-c <\"%s\" or \"%s\">\n",CHANNEL_FL_STR, CHANNEL_TH_STR);
-	printf("\t-l <s> interval time\n");
-}
 
 typedef struct
 {
@@ -58,6 +26,8 @@ typedef struct
 	const char * channel;
 
 } configuration;
+
+
 
 static int 
 handler(void* user, const char* section, const char* name,const char* value)
@@ -68,39 +38,45 @@ handler(void* user, const char* section, const char* name,const char* value)
 
 	if (MATCH(pconfig->channel, "port")) {
         pconfig->port = strdup(value);
-    } else if (strcmp(pconfig->channel, CHANNEL_FL_STR) == 0 && MATCH(pconfig->channel, "rate")) {
-		int n = sizeof(supported_vocoders) / sizeof(vocoder_info);
-		for (int i = 0; i < n; i++){
+//    } else if (strcmp(pconfig->channel, CHANNEL_FL_STR) == 0 && MATCH(pconfig->channel, "rate")) {
+    } else if (MATCH(pconfig->channel, "rate")) {
+		for (int i = 0; i < num_of_vocoders; i++){
 			if (!strcmp(value, supported_vocoders[i].vocoder_string)){
 				pconfig->vocoder_identification = supported_vocoders[i].vocoder_identification;
 				break;
 			}
 		}
     } else {
-		//E_FATAL("unknown section %s or name %s\n",section,name);
         return 0;
     }
 
     return 1;
 }
 
+static void 
+usage(void) {
+	printf("\t-f <filename> if you want save WAV-file\n");
+	printf("\t-c <\"%s\" or \"%s\">\n",CHANNEL_FL_STR, CHANNEL_TH_STR);
+	printf("\t-l <s> interval time\n");
+}
+
 int
 main (int argc, char** argv)
 {   
-    void* dec;
-    //short vocoder_identification = 0;
-    int opt, i, num_of_vocoders = sizeof(supported_vocoders) / sizeof(vocoder_info);
- 
+    void* vocoder = NULL;
+
+    int opt, status;
     short * buffer = NULL;
     unsigned char * c_frame = NULL;
-    size_t frame_sp = 0;
-    size_t frame_cbit = 0;
+    int frame_sp = 0;
+    int frame_cbit = 0;
 
 	configuration config;
     config.port = NULL;
     FILE * _out = NULL;
 
-    double t;
+    uint16_t time;
+    
 
     E_INFO("%s COMPILED ON: %s, AT: %s\n\n", argv[0], __DATE__, __TIME__);
     
@@ -109,7 +85,13 @@ main (int argc, char** argv)
 		return 3;
 	}	
 
-    // Разбор параметров командной строки
+    /*
+    / Разбор параметров командной строки:
+    /   'c' - выбор канала (ФЛ или ТЧ)
+    /   'f' - файл вывода
+    /   'l' - время записи [сек]
+    */
+
 	while ((opt = getopt(argc, argv, "c:f:l:")) != EOF) {
 		switch (opt) {
 		case 'c': // считываем канал: ТЧ/ФЛ
@@ -133,7 +115,7 @@ main (int argc, char** argv)
 		}
 		case 'l': // длина записи
 		{
-            t = strtod(optarg, NULL);
+            time = (uint16_t)strtoul(optarg, NULL,10);
 			// TODO:
 			break;
 		}
@@ -151,50 +133,60 @@ main (int argc, char** argv)
 	}
 
 
+    frame_sp = vocoder_get_input_size(config.vocoder_identification, VOCODER_DIRECTION_ENCODER);
+    frame_cbit = vocoder_get_input_size(config.vocoder_identification, VOCODER_DIRECTION_DECODER);
+
+    E_INFO("frame_sp = %d\tframe_cb = %d\n", frame_sp,frame_cbit);
+
+    if ((frame_sp == 0) || (frame_cbit == 0)) {
+        E_FATAL("Cannot determine IO size for codec %d\n", config.vocoder_identification);
+        return -1;
+    }
+
+    if (vocoder_library_setup()) {
+        E_FATAL("cannot setup library for codec %d\n", config.vocoder_identification);
+        return -1;
+    }
+
+    buffer = (short *)malloc(frame_sp);
+    c_frame = (unsigned char *)malloc(sizeof(unsigned char)*frame_cbit);
+
     if (!strcmp(config.channel, CHANNEL_FL_STR)){
-        // С1-ФЛ
 
-        frame_sp = vocoder_get_input_size(config.vocoder_identification, VOCODER_DIRECTION_ENCODER);
-        frame_cbit = vocoder_get_input_size(config.vocoder_identification, VOCODER_DIRECTION_DECODER);
+        /*
+        / В канале ФЛ данные передаются в сжатом вокодером виде,
+        / поэтому (при необходимости) нужно расшифровать.
+        / 
+        / Создаем декодер, тип (скорость) которого задается в инишнике
+        */
 
-        E_INFO("frame_sp = %d\tframe_cb = %d\n", frame_sp,frame_cbit);
+        vocoder = vocoder_create(config.vocoder_identification, VOCODER_DIRECTION_DECODER);
 
-        if ((frame_sp == 0) || (frame_cbit == 0)) {
-            E_FATAL("Cannot determine IO size for codec %d\n", config.vocoder_identification);
-            return -1;
-        }
-
-        if (vocoder_library_setup()) {
-            E_FATAL("cannot setup library for codec %d\n", config.vocoder_identification);
-            return -1;
-        }
-        dec = vocoder_create(config.vocoder_identification, VOCODER_DIRECTION_DECODER);
-        if (dec == NULL) {
-            E_FATAL("codec %d cannot be created\n", config.vocoder_identification);
-            vocoder_library_destroy();
-            return -1;
-        }
-
-        buffer = (short *)malloc(frame_sp);
-        c_frame = (unsigned char *)malloc(sizeof(unsigned char)*frame_cbit);
-
-        int h = write_wav_stereo_header(_out, SAMPLE_RATE, SAMPLE_RATE * (int32_t)t , AUDIO_FORMAT_PCM);
-        if (h != 0){
-            E_WARN("output *.wav file is false\n");
-            /* code */
-        }
+        status = write_wav_stereo_header(_out, SAMPLE_RATE, SAMPLE_RATE * time , AUDIO_FORMAT_PCM);
+        if (status){ E_WARN("output *.wav file is false\n");}
     }else{
+        /*
+        / В канале ТЧ данные передаются в сжатом виде (A-law),
+        / поэтому перед тем как использовать вокодер, нужно привести данные в формат PCM.
+        / 
+        / Если ... то на выходе будет сжатые вокодером данные.
+        / Создаем кодер, тип (скорость) которого задается в инишнике
+        */
+
+        vocoder = vocoder_create(config.vocoder_identification, VOCODER_DIRECTION_ENCODER);
         
-        int h = write_wav_stereo_header(_out, SAMPLE_RATE, SAMPLE_RATE * (int32_t)t , AUDIO_FORMAT_ALAW);
-        if (h != 0){
-            E_WARN("output *.wav file is false\n");
-            /* code */
-        }
+        //status = write_wav_stereo_header(_out, SAMPLE_RATE, SAMPLE_RATE * time , AUDIO_FORMAT_ALAW);
+        status = write_wav_stereo_header(_out, SAMPLE_RATE, SAMPLE_RATE * time , AUDIO_FORMAT_PCM);
+        if (status){ E_WARN("output *.wav file is false\n");}
     }
 
 
+    if (vocoder == NULL) {
+        E_FATAL("codec %d cannot be created\n", config.vocoder_identification);
+        vocoder_library_destroy();
+        return 101;
+    }
     
-
 
     // Работа с COM-портом
     struct termios tty0;
@@ -206,7 +198,7 @@ main (int argc, char** argv)
 	// Error Handling
 	if (tcgetattr ( handle, &tty0 ) != 0 ) {
 		E_FATAL("Error: %d from tcgetattr %s", errno, strerror(errno));
-        return -1;
+        return 102;
 	}
 
 	//tty1 = tty0;
@@ -278,14 +270,14 @@ main (int argc, char** argv)
         return -1;
 	}
 
+    // Расчет количества отсчетов в wav-файле
+    int n_block_max = floor(2 * SAMPLE_RATE * time / frame_sp);
 
     if (!strcmp(config.channel, CHANNEL_FL_STR)){
         
         int n = 0, spot = 0;
-        int32_t n_blocks_count = 0;
-        // Расчет количества отсчетов в wav-файле
-        int32_t n_block_max = floor(2 * SAMPLE_RATE * t / frame_sp);
-
+        int n_blocks_count = 0;
+        
         do {
             n = read(handle, &c_frame[n], frame_cbit - spot);
             spot += n;
@@ -295,7 +287,12 @@ main (int argc, char** argv)
     //                printf("%02X",c_frame[i]);
     //            printf("\n");
             
-                vocoder_process(dec, c_frame, buffer);
+                status = vocoder_process(vocoder, c_frame, buffer);
+                if (status < 0 ) 
+                {
+                    E_FATAL("Encoder failed, status=%d\n", status);
+                    break;
+                }
                 fwrite(buffer,1,frame_sp,_out);
                 fflush(_out);
 
@@ -310,115 +307,178 @@ main (int argc, char** argv)
     }else{
         // TODO: C1-ТЧ
         //
-        // Запись сжатых кодером данных в COM-порт
         E_INFO("Write commant to COM-port\n");
-        int i,count;
-        uint32_t marker =  0x99699699;
+
+        int i,count1, count2;
+        int n_samples = frame_sp / sizeof(short);
+        int n_read_bytes;
+        int n_blocks,n_frames;
+        const uint32_t marker =  0x99699699;
         uint16_t size;
-        unsigned char code;
-/*
-        const uint64_t marker = 0x99966999;
-        uint16_t size = 9;
-        // TODO: malloc
-		unsigned char command[9] = {
-                            0xB1,0x01,
-                            0xE8,0x03,
-                            0x67,0x00,
-                            }; 
-        unsigned char code = 0;
-        for (size_t i = 0; i < size; i++)
-        {
+        unsigned char code, byte;
+
+        unsigned char command[15] = { 
+            0x99, // Маркер
+            0x96, // 
+            0x69, //
+            0x99, //
+            0x09, // Длина последующей части посылки (младший байт)
+            0x00, // Длина последующей части посылки (старший байт)
+            0xB1, // Номер функции, адрес модема
+            0x01, // Последовательный номер посылки
+            0x08, // Номер команды: 8 - включение/отключение записи сигнала ТЧ
+            0x01, // 1 - включение
+            0x01, // Время [сек], младший байт 
+            0x00, // Время [сек], старший байт
+            0x67, // Пороговый уровень речи (младший байт)
+            0x00, // Пороговый уровень речи (старший байт)
+            0xdd  // Контрольная сумма // 0xdd
+        };
+        /*
+        / Перед отправкой команды нужно указать (изменить) время записи,
+        / после пересчитать контрольную сумму
+        */
+
+        //time = htobe16(time);
+        memcpy(&command[10],&time, sizeof(uint16_t));
+
+        code = 0;
+        for (i = 6; i < 6 + 8; i++){
             code +=command[i];
         }
-        code = -code;
+        command[14] = ~code + 1;
+
+        for (i = 6; i < 6 + 9; i++){
+            printf("\t%d: %02x \n",i,command[i]);
+        }
+
+        /*
+        / Отправляем команду в модем
+        */
+
+        n_read_bytes = write(handle, &command,15);
+        if (n_read_bytes != 15){
+            E_INFO("Error write command\n");
+            goto out;
+        }
         
-        // TODO:
-        size = htobe16(size);
-
- */
-        unsigned char command[15] = {
-            0x99,
-            0x96,
-            0x69,
-            0x99,
-            0x09,
-            0x00,
-            0xB1, //1
-            0x01, //2
-            0x08, //3
-            0x01, //4
-            0x01, //5 - 65
-            0x00,
-            0x67,
-            0x00,
-            0xdd //code - 7a
-        };
-
-        int s = write(handle, &command,15);
-        printf("%d\n",s);
 
         E_INFO("Reeding answer from COM-port\n");
         
+        count2 = 0; n_blocks = 0; n_frames = 0;
         do{
 
-            uint32_t tmarker = UINT64_C(0);
+            uint32_t tmarker = 0;
             // 1. читаем и сверяем маркер
-            s = read(handle, &tmarker, sizeof(uint32_t));
-            if((sizeof(marker) != s) || (tmarker != marker)){
+            n_read_bytes = read(handle, &tmarker, sizeof(uint32_t));
+            if((sizeof(marker) != n_read_bytes) || (tmarker != marker)){
                 E_INFO("Error reading marker: %x\n",tmarker);
                 goto out;
             }
             
             // 2. длина фрейма
-            s = read(handle, &size, sizeof(size));
-            if(sizeof(size) != s){
+            n_read_bytes = read(handle, &size, sizeof(size));
+            if(sizeof(size) != n_read_bytes){
                 E_INFO("Error reading length of frame body\n");
                 goto out;
             }
 
-            c_frame = (unsigned char *)malloc(sizeof(unsigned char)*size);
 
             // 3. тело фрейма
-            count = 0; code = 0;
-            do {
-                // TODO: malloc для буффера
-                s = read(handle, &c_frame[count], 1);
-                if (s < 1) {
-                    free(c_frame);
-                    E_INFO("Error reading frame body: %d из %d\n",count,size);
+            count1 = 0; code = 0;
+            
+            /*
+            / Первые четыре байта несут информацию  о адресе модема, порядковом номере фрейма и т.д.
+            / Эту информацию никак не обрабатываем, пробрасываем
+            */
+            for (i = 0; i < 4; i++)
+            {
+                n_read_bytes = read(handle, &byte, 1);
+                                if (n_read_bytes < 1) {
+                    E_INFO("Error reading frame body: %d из %d\n",count1,size);
                     goto out;
                 }
 
-                code += c_frame[count];
-                count += s;
-                
-            } while(count < size - 1);
+                /*
+                / При расчете контрольной суммы необходимо выполнить сложение по модулю 256
+                / каждого байта в фрейме
+                */
+                code += byte;
+                count1 += n_read_bytes;
+            }
+            
 
+            while(count1 < size - 1){
+
+                n_read_bytes = read(handle, &byte, 1);
+                if (n_read_bytes < 1) {
+                    E_INFO("Error reading frame body: %d из %d\n",count1,size);
+                    goto out;
+                }
+
+                /*
+                / При расчете контрольной суммы необходимо выполнить сложение по модулю 256
+                / каждого байта в фрейме
+                */
+                code += byte;
+
+                /*
+                / При конвертации A-law в PCM один байт расширяется в два (unsigned char -> short)
+                */
+                buffer[count2] = alaw2linear(byte);
+                count1 += n_read_bytes; count2 += n_read_bytes;
+
+                if(n_samples == count2){
+                    /*
+                    / Буффер имеет размер, равный одному блоку данных на входе вокодера
+                    / При заполнении буфера происходит кодирование,
+                    / а после результат с выхода вокодера записывается в файл
+                    */
+
+                    // TODO: вынести в отдельный поток
+
+                    //status = vocoder_process(vocoder, c_frame, buffer);		
+		            //if (status < 0 ) 
+                    //{
+                    //    E_FATAL("Encoder failed, status=%d\n", status);
+                    //    break;
+                    //}
+
+                    /* 
+                    / Запись в WAV-file блока данных
+                    */
+
+                    //fwrite(c_frame, 1, frame_cbit,_out);
+                    fwrite(buffer,1,frame_sp,_out);
+                    fflush(_out);
+
+                    count2 = 0;
+                    n_blocks++;
+                }
+            }
+            
             // 4. контрольная сумма - дополнение до двух
-            s = read(handle, &c_frame[count], 1);
-            if((s < 1) || (c_frame[count] != (0xFF & (UINT8_MAX - code + 1)))){
-                free(c_frame);
-                E_INFO("Error check sum: %x vs %x\n",c_frame[count], UINT8_MAX - code + 1); // ~code+1
+            n_read_bytes = read(handle, &byte, 1);
+            code = UINT8_MAX - code + 1;
+            if((n_read_bytes != 1) || (byte != code)){
+                E_INFO("Error check sum: %x vs %x\n",byte, code); // ~code+1
                 goto out;
             }
-            // запись в WAV-file блока данных
-            // fwrite(c_frame,1,size-1,_out);
-            fwrite(&c_frame[4],1,size-1-4,_out);
-            fflush(_out);
 
-            free(c_frame);
-            E_INFO("frame read successfully, size %d\n",size);
+            //E_INFO("frame read successfully, size %d\n",size);
+            n_frames++;
 
         }while (TRUE);
         
     out:
-        E_INFO("last number byte reading: %d\n",s);
+        E_INFO("last number byte reading: %d\n",n_read_bytes);
+        E_INFO("n_blocks: %d from %d\tn_frames: %d\n",n_blocks,n_block_max, n_frames);
     }
 
     fclose(handle);
     if (_out) fclose(_out);
 
-    vocoder_free(dec);
+    vocoder_free(vocoder);
     if(buffer) free(buffer);
     if(c_frame) free(c_frame);
     vocoder_library_destroy();

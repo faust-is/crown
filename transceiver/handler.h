@@ -19,6 +19,8 @@ static vocoder_info supported_vocoders[] = {
 	/* Add more vocoders here! */
 };
 
+static const int num_of_vocoders = sizeof(supported_vocoders) / sizeof(vocoder_info);
+
 void recognize_from_file(FILE * rawfd, int samplerate, int vocoder_identification, int tty_handle);
 void recognize_from_microphone(ad_rec_t *ad, int vocoder_identification, int tty_handle);
 

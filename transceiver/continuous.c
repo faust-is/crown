@@ -69,8 +69,7 @@ handler(void* user, const char* section, const char* name,const char* value)
 	if (MATCH(pconfig->channel, "port")) {
         pconfig->port = strdup(value);
     } else if (strcmp(pconfig->channel, CHANNEL_FL_STR) == 0 && MATCH(pconfig->channel, "rate")) {
-		int n = sizeof(supported_vocoders) / sizeof(vocoder_info);
-		for (int i = 0; i < n; i++){
+		for (int i = 0; i < num_of_vocoders; i++){
 			if (!strcmp(value, supported_vocoders[i].vocoder_string)){
 				pconfig->vocoder_identification = supported_vocoders[i].vocoder_identification;
 				break;
