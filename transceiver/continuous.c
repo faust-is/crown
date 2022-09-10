@@ -7,82 +7,130 @@
 #include <sys/select.h>
 #endif
 
-#include "err.h"
-
-/*
-#include "vocoderAPI.h"
-#include <ctype.h>
-#include <stdint.h>
-#include <stdlib.h>
-//#include <unistd.h>
-#include <sched.h>
-#include <sys/mman.h>
-#include <sys/resource.h>
-#include <sys/time.h>
-#include <signal.h>
-#include <semaphore.h>
-*/
 #include <fcntl.h> // Contains file controls like O_RDWR
 #include <errno.h> // Error integer and strerror() function
 #include <termios.h> // Contains POSIX terminal control definitions
 #include <unistd.h> // write(), read(), close()
 
-#include <getopt.h>
+#include "err.h"
 #include "ini.h"
 #include "handler.h"
 
-#define CHANNEL_FL_STR "C1_FL"
-#define CHANNEL_TH_STR "C1_TH"
+const char *const file_name_ini = "continuous.ini";
 
-/*
- * Main utterance processing loop:
- *     for (;;) {
- *        start utterance and wait for speech to process
- *        decoding till end-of-utterance silence will be detected
- *        print utterance result;
- *     }
- */
-
-static void 
-usage(void) {
-	printf("\t-m if you want use microphone\n");
-	printf("\t-f <filename> if you want load WAV-file\n");
-	printf("\t-c <\"%s\" or \"%s\">\n",CHANNEL_FL_STR, CHANNEL_TH_STR);
-	printf("\t-l <s> interval time\n");
-}
 
 typedef struct
 {
-    const char* port;
-    int vocoder_identification; // from rate
-	const char * channel;
+    const char* serial_port;
+    unsigned int vocoder_identification; // from rate
+	const char* ip;				// for UDP socket
+	unsigned int ip_port;
+	unsigned int number_block_for_out;
 
 } configuration;
 
-static int 
-handler(void* user, const char* section, const char* name,const char* value)
+
+static int handler(void* user, const char* section, const char* name,const char* value)
 {
     configuration* pconfig = (configuration*)user;
 
     #define MATCH(s, n) strcmp(section, s) == 0 && strcmp(name, n) == 0
 
-	if (MATCH(pconfig->channel, "port")) {
-        pconfig->port = strdup(value);
-    } else if (strcmp(pconfig->channel, CHANNEL_FL_STR) == 0 && MATCH(pconfig->channel, "rate")) {
+	if (MATCH("param", "port")) {
+        pconfig->serial_port = strdup(value);
+    } else if (MATCH("param", "rate")) {
 		for (int i = 0; i < num_of_vocoders; i++){
 			if (!strcmp(value, supported_vocoders[i].vocoder_string)){
 				pconfig->vocoder_identification = supported_vocoders[i].vocoder_identification;
 				break;
 			}
 		}
+	} else if (MATCH("param","nblocks")){
+		pconfig->number_block_for_out = strtoul(value, NULL, 10);
+	} else if (MATCH("addr", "ip")) {
+		pconfig->ip = strdup(value);
+	} else if (MATCH("addr", "port")) {
+		pconfig->ip_port = strtoul(value, NULL, 10);
     } else {
-		//E_FATAL("unknown section %s or name %s\n",section,name);
         return 0;
     }
 
     return 1;
 }
 
+int main(int argc, char *argv[])
+{
+
+	configuration config;
+	struct termios tty0, tty1;
+	int ret, tty_handle;
+
+    E_INFO("%s COMPILED ON: %s, AT: %s\n\n", argv[0], __DATE__, __TIME__);
+    
+	ret = ini_parse(file_name_ini, handler, &config);
+	if( ret < 0){
+		E_FATAL("can't load/parse %s\n",file_name_ini);
+	}else{
+		//E_INFO("config loaded from %s: serial port = %s, rate = %d\n", file_name_ini, config.serial_port, config.vocoder_identification);
+	}
+    
+	/* open serial port */
+	tty_handle = open(config.serial_port, O_RDWR| O_NOCTTY );
+	memset (&tty0, 0, sizeof(tty0));
+
+	/* error handling */
+	if (tcgetattr (tty_handle, &tty0) != 0 ) {
+		E_FATAL("error: %d from tcgetattr %s\n", errno, strerror(errno));
+	}
+
+	tty1 = tty0;
+
+	cfsetospeed (&tty0, (speed_t)B115200);
+    cfsetispeed (&tty0, (speed_t)B115200);
+
+	tty0.c_cflag |= (CLOCAL | CREAD);    // ignore modem controls
+	tty0.c_cflag &= ~CSIZE;
+	tty0.c_cflag |= CS8;         // 8-bit characters
+	tty0.c_cflag &= ~PARENB;     // no parity bit
+	tty0.c_cflag &= ~CSTOPB;     // only need 1 stop bit
+	tty0.c_cflag &= ~CRTSCTS;    // no hardware flowcontrol
+
+	// setup for non-canonical mode
+	tty0.c_iflag = IGNPAR;//&= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
+	tty0.c_lflag = 0;//&= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+	tty0.c_oflag = 0;//&= ~OPOST;
+
+	// fetch bytes as they become available
+	tty0.c_cc[VMIN] = 0;
+	tty0.c_cc[VTIME] = 10;
+	
+	// Make raw
+	//cfmakeraw(&tty0);
+
+	// Flush Port, then applies attributes
+	tcflush(tty_handle, TCIFLUSH);
+	if (tcsetattr(tty_handle, TCSANOW, &tty0) != 0) {
+   		E_FATAL("error: %d from tcgetattr %s\n", errno, strerror(errno));
+	}
+
+	// TODO: 10 сек
+	send_command(10, tty_handle);
+	write_voice_from_channel(config.vocoder_identification, tty_handle, config.number_block_for_out);
+	
+
+
+
+    // close serial port
+	fclose(tty_handle);
+
+	// free config ini
+	//if(NULL != config.serial_port) free(config.serial_port);
+	//if(NULL != config.ip) free(config.ip);
+
+    return 0;
+}
+
+/*
 int
 main(int argc, char *argv[])
 {
@@ -211,7 +259,7 @@ main(int argc, char *argv[])
 
     return 0;
 }
-
+*/
 #if defined(_WIN32_WCE)
 #pragma comment(linker,"/entry:mainWCRTStartup")
 #include <windows.h>
