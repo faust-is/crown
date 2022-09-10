@@ -122,18 +122,21 @@ void send_voice_to_channel(FILE * rawfd, int samplerate, int tty_handle){
 }
 */
 
-int write_voice_from_channel(short vocoder_identification, int handle, int n_frames_for_out){
+int send_voice_from_channel_to_socket(short vocoder_identification, int tty_handle, send_to_handler sending, int n_frames_for_out){
         
 	int n_read_bytes;
 	unsigned char byte, crc;
 	unsigned short size_block;
 
-	E_INFO("reeding answer from COM-port\n");
+	E_INFO("start send voice from serial port to socket\n");
 
-    // 
-	
+	/*
+	/ vocoder initialization and memory allocation
+	*/
+    
 	size_t frame_sp = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_ENCODER);
     size_t frame_cbit = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_DECODER);
+
     if ((frame_sp == 0) || (frame_cbit == 0)) {
         fprintf (stderr, "Cannot determine IO size for codec %d\n", vocoder_identification);
         return -1;
@@ -150,6 +153,7 @@ int write_voice_from_channel(short vocoder_identification, int handle, int n_fra
         vocoder_library_destroy();
         return -1;
     }
+
     short * buffer = (short *)malloc(frame_sp);
     unsigned char * c_frame = (unsigned char *)malloc(sizeof(unsigned char)*frame_cbit * n_frames_for_out);
 
@@ -167,14 +171,14 @@ int write_voice_from_channel(short vocoder_identification, int handle, int n_fra
 
 		unsigned int tmarker = 0;
 		// 1. читаем и сверяем маркер
-		n_read_bytes = read(handle, &tmarker, sizeof(unsigned int ));
+		n_read_bytes = read(tty_handle, &tmarker, sizeof(unsigned int ));
 		if((sizeof(marker) != n_read_bytes) || (tmarker != marker)){
 			E_INFO("error reading marker: %x\n",tmarker);
 			goto out;
 		}
 		
 		// 2. длина блока
-		n_read_bytes = read(handle, &size_block, sizeof(size_block));
+		n_read_bytes = read(tty_handle, &size_block, sizeof(size_block));
 		if(sizeof(size_block) != n_read_bytes){
 			E_INFO("error reading length of frame body\n");
 			goto out;
@@ -191,9 +195,9 @@ int write_voice_from_channel(short vocoder_identification, int handle, int n_fra
 		*/
 		for (int i = 0; i < 4; i++)
 		{
-			n_read_bytes = read(handle, &byte, 1);
+			n_read_bytes = read(tty_handle, &byte, 1);
 			if(n_read_bytes < 1) {
-				E_INFO("error reading frame body: %d from %d\n",count_bytes,size_block);
+				E_INFO("error reading frame body: %d from %d\n", count_bytes, size_block);
 				goto out;
 			}
 
@@ -201,14 +205,14 @@ int write_voice_from_channel(short vocoder_identification, int handle, int n_fra
 			/ При расчете контрольной суммы необходимо выполнить сложение по модулю 256
 			/ каждого байта в фрейме
 			*/
-			crc+= byte;
+			crc += byte;
 			count_bytes += n_read_bytes;
 		}
             
 
 		while(count_bytes < size_block - 1){
 
-			n_read_bytes = read(handle, &byte, 1);
+			n_read_bytes = read(tty_handle, &byte, 1);
 			if (n_read_bytes < 1) {
 				E_INFO("error reading frame body: %d from %d\n",count_bytes,size_block);
 				goto out;
@@ -243,52 +247,44 @@ int write_voice_from_channel(short vocoder_identification, int handle, int n_fra
 				int status = vocoder_process(enc, &c_frame[frame_cbit * (count_frames % n_frames_for_out)], buffer);		
 				if (status < 0 ) 
 				{
-				    E_FATAL("Encoder failed, status=%d\n", status);
+				    E_FATAL("encoder failed, status = %d\n", status);
 				    break;
 				}
 
 				count_frames++;
 
-				/* 
-				/ Запись в WAV-file блока данных
-				*/
-				if ((count_frames % n_frames_for_out) == 0)
-				{
-					E_INFO("T:\n");
+				if ((count_frames % n_frames_for_out) == 0){
+					/* Отправка блока данных по UDP */
+					if(sending(c_frame,frame_cbit * n_frames_for_out) < 0){
+						E_FATAL("error: failed to send to socket\n");
+					}
 				}
 				
-				//fwrite(c_frame, 1, frame_cbit,_out);
-				//fwrite(buffer,1,frame_sp,_out);
-				//fflush(_out);
-
 				count_samples = 0;
 			}
 		}
 		
 		// 4. контрольная сумма - дополнение до двух
-		n_read_bytes = read(handle, &byte, 1);
+		n_read_bytes = read(tty_handle, &byte, 1);
 		crc = ~crc + 1;
 		if((n_read_bytes != 1) || (byte != crc)){
 			E_INFO("error check sum: %x vs %x\n",byte, crc); // ~code+1
 			goto out;
 		}
-
-		//E_INFO("frame read successfully, size %d\n",size);
-		//count_blocks++;
-
-	}//while (TRUE);
+	}
         
 out:
 	E_INFO("last number byte reading: %d\n",n_read_bytes);
-	E_INFO("n_blocks: %d \tn_frames: %d\n",count_blocks, count_frames);
+	E_INFO("number blocks reading from SG1: %d\n",count_blocks); 
+	E_INFO("number frames send to socket: %d\n", count_frames);
     
-
-    fclose(handle);
-
-
+	/*
+	/ vocoder destroy and free memory
+	*/
+    
     vocoder_free(enc);
-    if(buffer) free(buffer);
-    if(c_frame) free(c_frame);
+    free(buffer);
+    free(c_frame);
     vocoder_library_destroy();
     return 0;
 }

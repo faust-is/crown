@@ -1,16 +1,23 @@
 
 #include <string.h>
 #include <assert.h>
-#if defined(_WIN32) && !defined(__CYGWIN__)
-#include <windows.h>
-#else
+//#if defined(_WIN32) && !defined(__CYGWIN__)
+//#include <windows.h>
+//#else
 #include <sys/select.h>
-#endif
+//#endif
 
 #include <fcntl.h> // Contains file controls like O_RDWR
 #include <errno.h> // Error integer and strerror() function
 #include <termios.h> // Contains POSIX terminal control definitions
 #include <unistd.h> // write(), read(), close()
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h> 
 
 #include "err.h"
 #include "ini.h"
@@ -18,14 +25,14 @@
 
 const char *const file_name_ini = "continuous.ini";
 
-
+// TODO: default setting
 typedef struct
 {
     const char* serial_port;
     unsigned int vocoder_identification; // from rate
 	const char* ip;				// for UDP socket
-	unsigned int ip_port;
-	unsigned int number_block_for_out;
+	unsigned short ip_port;
+	unsigned short number_block_for_out;
 
 } configuration;
 
@@ -58,69 +65,110 @@ static int handler(void* user, const char* section, const char* name,const char*
     return 1;
 }
 
-int main(int argc, char *argv[])
-{
 
-	configuration config;
-	struct termios tty0, tty1;
-	int ret, tty_handle;
+int set_serial_attrs(int tty_handle, speed_t speed, struct termios * tty_orig){
 
-    E_INFO("%s COMPILED ON: %s, AT: %s\n\n", argv[0], __DATE__, __TIME__);
-    
-	ret = ini_parse(file_name_ini, handler, &config);
-	if( ret < 0){
-		E_FATAL("can't load/parse %s\n",file_name_ini);
-	}else{
-		//E_INFO("config loaded from %s: serial port = %s, rate = %d\n", file_name_ini, config.serial_port, config.vocoder_identification);
-	}
-    
-	/* open serial port */
-	tty_handle = open(config.serial_port, O_RDWR| O_NOCTTY );
+	struct termios tty0;
 	memset (&tty0, 0, sizeof(tty0));
 
 	/* error handling */
-	if (tcgetattr (tty_handle, &tty0) != 0 ) {
+	if(tcgetattr (tty_handle, &tty0) != 0){
 		E_FATAL("error: %d from tcgetattr %s\n", errno, strerror(errno));
 	}
 
-	tty1 = tty0;
+	/* save initial setting*/
+	if (NULL != tty_orig){
+		memcpy(tty_orig, &tty0, sizeof(tty0));
+	}
+	
+	
+	cfsetospeed (&tty0, speed);
+    cfsetispeed (&tty0, speed);
 
-	cfsetospeed (&tty0, (speed_t)B115200);
-    cfsetispeed (&tty0, (speed_t)B115200);
-
-	tty0.c_cflag |= (CLOCAL | CREAD);    // ignore modem controls
+	tty0.c_cflag |= (CLOCAL | CREAD);    /* ignore modem controls */
 	tty0.c_cflag &= ~CSIZE;
-	tty0.c_cflag |= CS8;         // 8-bit characters
-	tty0.c_cflag &= ~PARENB;     // no parity bit
-	tty0.c_cflag &= ~CSTOPB;     // only need 1 stop bit
-	tty0.c_cflag &= ~CRTSCTS;    // no hardware flowcontrol
+	tty0.c_cflag |= CS8;         /* 8-bit characters */
+	tty0.c_cflag &= ~PARENB;     /* no parity bit */
+	tty0.c_cflag &= ~CSTOPB;     /* only need 1 stop bit */
+	tty0.c_cflag &= ~CRTSCTS;    /* no hardware flowcontrol */
 
-	// setup for non-canonical mode
+	/* setup for non-canonical mode */
 	tty0.c_iflag = IGNPAR;//&= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
 	tty0.c_lflag = 0;//&= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
 	tty0.c_oflag = 0;//&= ~OPOST;
 
-	// fetch bytes as they become available
+	/* fetch bytes as they become available */
 	tty0.c_cc[VMIN] = 0;
 	tty0.c_cc[VTIME] = 10;
-	
-	// Make raw
-	//cfmakeraw(&tty0);
 
-	// Flush Port, then applies attributes
+	/* flush port, then applies attributes */
 	tcflush(tty_handle, TCIFLUSH);
 	if (tcsetattr(tty_handle, TCSANOW, &tty0) != 0) {
-   		E_FATAL("error: %d from tcgetattr %s\n", errno, strerror(errno));
+   		E_FATAL("error: %d from tcsetattr %s\n", errno, strerror(errno));
 	}
 
-	// TODO: 10 сек
+	/* all ok*/
+	return 0;
+}
+
+
+static struct sockaddr_in sock0;
+static int sock_handle;
+
+static int handler_send_to(const char* data, size_t size){
+
+	E_INFO("sending %zu bytes to socket\n", size);
+
+	return sendto(sock_handle, data, size,
+    MSG_CONFIRM, (const struct sockaddr *) &sock0, 
+    sizeof(sock0)); 
+}
+
+
+int main(int argc, char *argv[])
+{
+
+	configuration config;
+	static struct termios tty_orig;
+	int tty_handle;
+
+    E_INFO("%s COMPILED ON: %s, AT: %s\n\n", argv[0], __DATE__, __TIME__);
+    
+	if(ini_parse(file_name_ini, handler, &config) < 0){
+		E_FATAL("can't load/parse %s\n",file_name_ini);
+	}else{
+		E_INFO("config loaded from %s: serial port = %s, rate = %d\n", file_name_ini, config.serial_port, config.vocoder_identification);
+	}
+    
+	/* open serial port */
+	tty_handle = open(config.serial_port, O_RDWR| O_NOCTTY );
+
+	/* check handle and set speed */
+	set_serial_attrs(tty_handle, (speed_t)B115200, &tty_orig);
+
+	/* open UDP socket*/
+	if((sock_handle = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP)) < 0){
+        E_FATAL("socket creation failed\n");
+    } 
+
+	/* set port and IP for UDP socket*/
+	memset (&sock0, 0, sizeof(sock0));
+	sock0.sin_family = AF_INET;
+    sock0.sin_port = htons(config.ip_port);
+    sock0.sin_addr.s_addr = inet_addr(config.ip); // 
+
+
+	// TODO: запись 10 сек
 	send_command(10, tty_handle);
-	write_voice_from_channel(config.vocoder_identification, tty_handle, config.number_block_for_out);
+	send_voice_from_channel_to_socket(config.vocoder_identification, tty_handle, handler_send_to, config.number_block_for_out);
 	
 
+	/* перед выходом устанавливаем старые настройки */
+	if (tcsetattr(tty_handle, TCSANOW, &tty_orig) != 0) {
+   		E_FATAL("error: %d from tcsetattr %s\n", errno, strerror(errno));
+	}
 
-
-    // close serial port
+    /* close serial port */
 	fclose(tty_handle);
 
 	// free config ini

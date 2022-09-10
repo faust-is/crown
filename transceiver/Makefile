@@ -25,7 +25,7 @@ votest: votest.o ../frontend/vocoder_frontend.o
 	$(CC)  $(CFLAGS) $^ -o $@ -L../$(MELP_SRC) -L../TETRA -lmelpe -lm -ltetra
 
 continuous: continuous.o err.o filename.o ini.o handler.o ../frontend/vocoder_frontend.o
-	$(CC)  $(CFLAGS) $^ -o $@ -L../$(MELP_SRC) -L../TETRA -L../audiodev -lmelpe -lm -ltetra -laudiodev -Wl,-rpath=../audiodev
+	$(CC)  $(CFLAGS) $^ -o $@ -L../$(MELP_SRC) -L../TETRA -L../audiodev -lmelpe -lm -ltetra
 	
 reciver: reciver.o wav.o err.o filename.o ini.o ../frontend/vocoder_frontend.o
 	$(CC)  $(CFLAGS) $^ -o $@ -L../$(MELP_SRC) -L../TETRA -lmelpe -lm -ltetra
