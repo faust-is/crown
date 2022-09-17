@@ -17,7 +17,9 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
-#include <netinet/in.h> 
+#include <netinet/in.h>
+#include <getopt.h>
+#include <stdbool.h>
 
 #include "err.h"
 #include "ini.h"
@@ -28,6 +30,8 @@ const char *const file_name_ini = "continuous.ini";
 // TODO: default setting
 typedef struct
 {
+	bool is_tx;
+
     const char* serial_port;
     unsigned int vocoder_identification; // from rate
 	const char* ip;				// for UDP socket
@@ -43,25 +47,46 @@ static int handler(void* user, const char* section, const char* name,const char*
 
     #define MATCH(s, n) strcmp(section, s) == 0 && strcmp(name, n) == 0
 
-	if (MATCH("param", "port")) {
-        pconfig->serial_port = strdup(value);
-    } else if (MATCH("param", "rate")) {
-		for (int i = 0; i < num_of_vocoders; i++){
-			if (!strcmp(value, supported_vocoders[i].vocoder_string)){
-				pconfig->vocoder_identification = supported_vocoders[i].vocoder_identification;
-				break;
+	if (pconfig->is_tx)
+	{
+		if (MATCH("param_tx", "port")) {
+        	pconfig->serial_port = strdup(value);
+    	} else if (MATCH("param_tx", "rate")) {
+			for (int i = 0; i < num_of_vocoders; i++){
+				if (!strcmp(value, supported_vocoders[i].vocoder_string)){
+					pconfig->vocoder_identification = supported_vocoders[i].vocoder_identification;
+					break;
+				}
 			}
-		}
-	} else if (MATCH("param","nblocks")){
-		pconfig->number_block_for_out = strtoul(value, NULL, 10);
-	} else if (MATCH("addr", "ip")) {
-		pconfig->ip = strdup(value);
-	} else if (MATCH("addr", "port")) {
-		pconfig->ip_port = strtoul(value, NULL, 10);
-    } else {
-        return 0;
-    }
-
+		} else if (MATCH("param_tx","nblocks")){
+			pconfig->number_block_for_out = strtoul(value, NULL, 10);
+		} else if (MATCH("addr_tx", "ip")) {
+			pconfig->ip = strdup(value);
+		} else if (MATCH("addr_tx", "port")) {
+			pconfig->ip_port = strtoul(value, NULL, 10);
+    	} else {
+        	return 0;
+    	}
+	}else{
+		if (MATCH("param_rx", "port")) {
+        	pconfig->serial_port = strdup(value);
+    	} else if (MATCH("param_rx", "rate")) {
+			for (int i = 0; i < num_of_vocoders; i++){
+				if (!strcmp(value, supported_vocoders[i].vocoder_string)){
+					pconfig->vocoder_identification = supported_vocoders[i].vocoder_identification;
+					break;
+				}
+			}
+		} else if (MATCH("param_rx","nblocks")){
+			pconfig->number_block_for_out = strtoul(value, NULL, 10);
+		} else if (MATCH("addr_rx", "ip")) {
+			pconfig->ip = strdup(value);
+		} else if (MATCH("addr_rx", "port")) {
+			pconfig->ip_port = strtoul(value, NULL, 10);
+    	} else {
+        	return 0;
+    	}
+	}
     return 1;
 }
 
@@ -83,7 +108,7 @@ int set_serial_attrs(int tty_handle, speed_t speed, struct termios * tty_orig){
 	
 	
 	cfsetospeed (&tty0, speed);
-    cfsetispeed (&tty0, speed);
+	cfsetispeed (&tty0, speed);
 
 	tty0.c_cflag |= (CLOCAL | CREAD);    /* ignore modem controls */
 	tty0.c_cflag &= ~CSIZE;
@@ -112,16 +137,26 @@ int set_serial_attrs(int tty_handle, speed_t speed, struct termios * tty_orig){
 }
 
 
-static struct sockaddr_in sock0;
+static struct sockaddr_in sock_proxy, sock_client;
 static int sock_handle;
 
-static int handler_send_to(const char* data, size_t size){
+static ssize_t send_to_socket(const char* data, size_t size){
 
 	E_INFO("sending %zu bytes to socket\n", size);
 
 	return sendto(sock_handle, data, size,
-    MSG_CONFIRM, (const struct sockaddr *) &sock0, 
-    sizeof(sock0)); 
+    MSG_CONFIRM, (const struct sockaddr *) &sock_proxy, 
+    sizeof(sock_proxy)); 
+}
+
+static ssize_t recv_from_socket(char* buffer, size_t size_buf){
+
+	int size_from_client;
+	ssize_t size_reading = recvfrom(sock_handle, (char *)buffer, size_buf, 
+                MSG_WAITALL, (struct sockaddr *) &sock_client,
+                &size_from_client);
+	E_INFO("rec: %ld / %d\n",size_reading, size_from_client);
+	return 0;
 }
 
 
@@ -130,10 +165,20 @@ int main(int argc, char *argv[])
 
 	configuration config;
 	static struct termios tty_orig;
-	int tty_handle;
+	int opt, tty_handle;
 
-    E_INFO("%s COMPILED ON: %s, AT: %s\n\n", argv[0], __DATE__, __TIME__);
+	E_INFO("%s COMPILED ON: %s, AT: %s\n\n", argv[0], __DATE__, __TIME__);
     
+	/* parse command line arguments */
+	while ((opt = getopt(argc, argv, "rt")) != EOF) {
+		// TODO: getopt_long_only
+		switch (opt) {
+			case 'r': config.is_tx = false; break;
+			case 't': config.is_tx = true; break;
+		}
+	}
+
+
 	if(ini_parse(file_name_ini, handler, &config) < 0){
 		E_FATAL("can't load/parse %s\n",file_name_ini);
 	}else{
@@ -147,20 +192,47 @@ int main(int argc, char *argv[])
 	set_serial_attrs(tty_handle, (speed_t)B115200, &tty_orig);
 
 	/* open UDP socket*/
-	if((sock_handle = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP)) < 0){
-        E_FATAL("socket creation failed\n");
-    } 
+	if((sock_handle= socket(AF_INET, SOCK_DGRAM, 0)) < 0){
+	//if((sock_handle = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP)) < 0){
+		E_FATAL("socket creation failed: %s\n", strerror(errno));
+	} 
 
 	/* set port and IP for UDP socket*/
-	memset (&sock0, 0, sizeof(sock0));
-	sock0.sin_family = AF_INET;
-    sock0.sin_port = htons(config.ip_port);
-    sock0.sin_addr.s_addr = inet_addr(config.ip); // 
+	memset (&sock_proxy, 0, sizeof(sock_proxy));
+	sock_proxy.sin_family = AF_INET; /* IPv4 */
+	sock_proxy.sin_port = htons(config.ip_port);
+	sock_proxy.sin_addr.s_addr = INADDR_ANY; //inet_addr(config.ip);
 
 
-	// TODO: запись 10 сек
-	send_command(10, tty_handle);
-	send_voice_from_channel_to_socket(config.vocoder_identification, tty_handle, handler_send_to, config.number_block_for_out);
+	/* check IPv4 addres*/
+	if (sock_proxy.sin_addr.s_addr == INADDR_NONE ) {
+    	E_FATAL("bad address: %s\n", config.ip);
+ 	}
+	
+	if(config.is_tx){
+		// TODO: запись 10 сек
+		send_command(10, tty_handle);
+		send_voice_from_channel_to_socket(config.vocoder_identification, tty_handle, send_to_socket, config.number_block_for_out);
+	}else{
+		if(bind(sock_handle, (struct sockaddr*)&sock_proxy, sizeof(sock_proxy)) < 0) {
+			E_FATAL("failed to bind socket %s\n", strerror(errno));
+		}
+		/* set port and IP for UDP socket*/
+		// memset (&sock_client, 0, sizeof(sock_client));
+		// sock_client.sin_family = AF_INET; /* IPv4 */
+		// sock_client.sin_port = htons(config.ip_port);
+		// sock_client.sin_addr.s_addr = inet_addr(config.ip);
+
+		/* check IPv4 addres*/
+		//if (sock_proxy.sin_addr.s_addr == INADDR_NONE ) {
+    	//	E_FATAL("bad address: %s\n", config.ip);
+ 		//}
+
+		// TODO: запись 10 сек
+		//send_command(10, tty_handle);
+		recv_voice_from_sock_to_channel(config.vocoder_identification, tty_handle, recv_from_socket, config.number_block_for_out);
+	}
+
 	
 
 	/* перед выходом устанавливаем старые настройки */
@@ -168,7 +240,7 @@ int main(int argc, char *argv[])
    		E_FATAL("error: %d from tcsetattr %s\n", errno, strerror(errno));
 	}
 
-    /* close serial port */
+	/* close serial port */
 	fclose(tty_handle);
 
 	// free config ini

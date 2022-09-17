@@ -121,6 +121,95 @@ void send_voice_to_channel(FILE * rawfd, int samplerate, int tty_handle){
 		free(buffer); 
 }
 */
+static unsigned int SG1_count_voice_frame = 0;
+
+int recv_voice_from_sock_to_channel(short vocoder_identification, int tty_handle, recv_from_handler receiving, int n_frames_for_out){
+
+
+	// TODO:
+	unsigned char SG1_count_com = 1;
+	/*
+	/ vocoder initialization and memory allocation
+	*/
+    
+	size_t frame_sp = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_ENCODER);
+    size_t frame_cbit = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_DECODER);
+
+    if ((frame_sp == 0) || (frame_cbit == 0)) {
+        fprintf (stderr, "Cannot determine IO size for codec %d\n", vocoder_identification);
+        return -1;
+    }
+
+    if (vocoder_library_setup()) {
+        fprintf (stderr, "cannot setup library for codec %d\n", vocoder_identification);
+        return -1;
+    }
+
+    void *dec = vocoder_create(vocoder_identification, VOCODER_DIRECTION_DECODER);
+    if (dec == NULL) {
+        fprintf (stderr, "codec %d cannot be created\n", vocoder_identification);
+        vocoder_library_destroy();
+        return -1;
+    }
+
+    short * buffer1 = (short *)malloc(frame_sp);
+    unsigned char * c_frame = (unsigned char *)malloc(frame_cbit * n_frames_for_out);
+
+
+	unsigned short frame_samples = frame_sp / 2;
+
+	/* длина посылки прикладного уровня */
+	unsigned short SG1_len_L3 = n_frames_for_out * frame_samples + 5;
+
+	/* длина посылки транспортного уровня */
+
+	unsigned short * SG1_len_L2 = SG1_len_L3 + 6;
+	unsigned char * buffer2 = (unsigned char *)malloc(SG1_len_L2);
+
+	for (;;)
+	{
+		receiving(c_frame, frame_cbit*n_frames_for_out);
+		
+		/* Транспортный уровень*/
+	
+		memcpy(buffer2, &marker, 4);
+		memcpy(&buffer2[4], &SG1_len_L3, sizeof(SG1_len_L3));
+
+		/* Тело посылки прикладного уровня */
+		{
+			buffer2[6] = 0xA1; // адресс модема
+			buffer2[7] = 0x8F & SG1_count_com++;
+			memcpy(&buffer2[8], &SG1_count_voice_frame, 2);
+
+			SG1_count_voice_frame++;
+			
+			
+			for (int i = 0; i < n_frames_for_out; i++)
+			{
+				vocoder_process(dec, &c_frame[i * frame_cbit], buffer1);
+
+				for (int j = 0; j < frame_samples; j++){
+					buffer2[10 + i*frame_samples + j] = linear2alaw(buffer1[j]);
+				}
+			}
+		}
+
+		/* Расчет CRC */
+		unsigned char crc = 0;
+		for (int i = 0; i < SG1_len_L3 - 1; i++){
+			crc += buffer2[6 + i];
+		}
+		buffer2[6 + SG1_len_L3] = crc;
+
+		/* Отправка данных в модем */
+		if(SG1_len_L2 != write(tty_handle, buffer2, SG1_len_L2)){
+			E_INFO("error write to COM-port\n");
+		}
+	}
+		
+    return 0;
+}
+
 
 int send_voice_from_channel_to_socket(short vocoder_identification, int tty_handle, send_to_handler sending, int n_frames_for_out){
         
