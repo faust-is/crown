@@ -25,6 +25,9 @@
 #include "ini.h"
 #include "handler.h"
 
+// TODO:
+#include "wav.h"
+
 const char *const file_name_ini = "continuous.ini";
 
 // TODO: default setting
@@ -192,7 +195,7 @@ int main(int argc, char *argv[])
 	set_serial_attrs(tty_handle, (speed_t)B115200, &tty_orig);
 
 	/* open UDP socket*/
-	if((sock_handle= socket(AF_INET, SOCK_DGRAM, 0)) < 0){
+	if((sock_handle = socket(AF_INET, SOCK_DGRAM, 0)) < 0){
 	//if((sock_handle = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP)) < 0){
 		E_FATAL("socket creation failed: %s\n", strerror(errno));
 	} 
@@ -211,12 +214,15 @@ int main(int argc, char *argv[])
 	
 	if(config.is_tx){
 		// TODO: запись 10 сек
-		send_command(10, tty_handle);
+		if(send_command(10, tty_handle) < 0){
+			E_FATAL("failed send command to SG1%s\n");
+		}
 		send_voice_from_channel_to_socket(config.vocoder_identification, tty_handle, send_to_socket, config.number_block_for_out);
 	}else{
 		if(bind(sock_handle, (struct sockaddr*)&sock_proxy, sizeof(sock_proxy)) < 0) {
 			E_FATAL("failed to bind socket %s\n", strerror(errno));
 		}
+
 		/* set port and IP for UDP socket*/
 		// memset (&sock_client, 0, sizeof(sock_client));
 		// sock_client.sin_family = AF_INET; /* IPv4 */
@@ -229,19 +235,40 @@ int main(int argc, char *argv[])
  		//}
 
 		// TODO: запись 10 сек
-		//send_command(10, tty_handle);
-		recv_voice_from_sock_to_channel(config.vocoder_identification, tty_handle, recv_from_socket, config.number_block_for_out);
-	}
+		//if(send_command(20, tty_handle) < 0){
+		//	E_FATAL("failed send command to SG1%s\n");
+		//}
+		// TODO: ===================START ===============================
+		
+	/*
+		FILE *f = NULL;
+		f = fopen("test.wav", "w");
+		if (f == NULL)
+			E_FATAL_SYSTEM("Failed to open file for writing");
+		else
+			E_INFO("yes!\n");
 
+		write_wav_stereo_header(f, SAMPLE_RATE, SAMPLE_RATE * 20, AUDIO_FORMAT_ALAW);
+		recv_voice_from_sock_to_channel(config.vocoder_identification, f, recv_from_socket, config.number_block_for_out);
+		fclose(f);
+	*/
+		// TODO: =======================END ===============================
+
+
+		recv_voice_from_sock_to_channel(config.vocoder_identification, tty_handle, recv_from_socket, config.number_block_for_out);
+
+	}
 	
 
+	close(sock_handle);
+	
 	/* перед выходом устанавливаем старые настройки */
 	if (tcsetattr(tty_handle, TCSANOW, &tty_orig) != 0) {
    		E_FATAL("error: %d from tcsetattr %s\n", errno, strerror(errno));
 	}
 
 	/* close serial port */
-	fclose(tty_handle);
+	close(tty_handle);
 
 	// free config ini
 	//if(NULL != config.serial_port) free(config.serial_port);

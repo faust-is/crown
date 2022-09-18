@@ -121,9 +121,40 @@ void send_voice_to_channel(FILE * rawfd, int samplerate, int tty_handle){
 		free(buffer); 
 }
 */
+
+//#include <fcntl.h>
+
 static unsigned int SG1_count_voice_frame = 0;
 
 int recv_voice_from_sock_to_channel(short vocoder_identification, int tty_handle, recv_from_handler receiving, int n_frames_for_out){
+
+/*
+	unsigned char *BUFFER;
+	int descriptor = open("log1.bin", O_RDONLY);
+    struct stat statistics;
+    if (descriptor != -1) {
+        FILE *file = fdopen(descriptor, "rb");
+
+        if (file) {
+            if (fstat(descriptor, &statistics) != -1) {
+                BUFFER = (char*)malloc(statistics.st_size);
+
+                int n_read_bytes = fread(BUFFER, 1, statistics.st_size, file);
+                if(statistics.st_size != n_read_bytes){
+                    E_INFO("Error reading file\n");
+                    exit(0);
+                }else{
+                    E_INFO("file read!\n");
+                }
+
+            }else{
+                E_INFO("error fstat\n");
+            }
+            fclose(file);
+        }
+        close(descriptor);
+    }
+*/
 
 
 	// TODO:
@@ -157,55 +188,120 @@ int recv_voice_from_sock_to_channel(short vocoder_identification, int tty_handle
 
 
 	unsigned short frame_samples = frame_sp / 2;
+// TODO:
+//frame_samples = 540;
 
 	/* длина посылки прикладного уровня */
-	unsigned short SG1_len_L3 = n_frames_for_out * frame_samples + 5;
+	unsigned short SG1_len_L3 = n_frames_for_out * frame_samples + 5; // 4, n*len, 1
 
 	/* длина посылки транспортного уровня */
+	unsigned char * buffer2 = (unsigned char *)malloc(SG1_len_L3 + 6);
 
-	unsigned short * SG1_len_L2 = SG1_len_L3 + 6;
-	unsigned char * buffer2 = (unsigned char *)malloc(SG1_len_L2);
-
-	for (;;)
-	{
-		receiving(c_frame, frame_cbit*n_frames_for_out);
-		
-		/* Транспортный уровень*/
+	/* Транспортный уровень*/
 	
-		memcpy(buffer2, &marker, 4);
-		memcpy(&buffer2[4], &SG1_len_L3, sizeof(SG1_len_L3));
+	memcpy(buffer2, &marker, 4);
+	memcpy(&buffer2[4], &SG1_len_L3, sizeof(SG1_len_L3));
+	
+	for (int s = 0;s < 143;s++)
+	{
+		
+		receiving(c_frame, frame_cbit*n_frames_for_out);
+		// TODO: запись 10 сек
+		if(s == 0){
+			if(send_command(10, tty_handle) < 0){
+				E_FATAL("failed send command to SG1%s\n");
+			}
+		}
+
 
 		/* Тело посылки прикладного уровня */
 		{
 			buffer2[6] = 0xA1; // адресс модема
-			buffer2[7] = 0x8F & SG1_count_com++;
+			//buffer2[7] = (0x7F & SG1_count_com++) | 0x80;
+			buffer2[7] = (0x7F & ++SG1_count_com);
 			memcpy(&buffer2[8], &SG1_count_voice_frame, 2);
 
 			SG1_count_voice_frame++;
 			
-			
+			int status;
 			for (int i = 0; i < n_frames_for_out; i++)
 			{
-				vocoder_process(dec, &c_frame[i * frame_cbit], buffer1);
+				status = vocoder_process(dec, &c_frame[i * frame_cbit], buffer1);
+				if (status < 0 ) 
+				{
+				    E_FATAL("decoder failed, status = %d\n", status);
+				    goto out;
+				}
 
 				for (int j = 0; j < frame_samples; j++){
 					buffer2[10 + i*frame_samples + j] = linear2alaw(buffer1[j]);
 				}
 			}
 		}
-
+		
 		/* Расчет CRC */
 		unsigned char crc = 0;
-		for (int i = 0; i < SG1_len_L3 - 1; i++){
-			crc += buffer2[6 + i];
-		}
-		buffer2[6 + SG1_len_L3] = crc;
+	// ВАРИАНТ 2:
 
-		/* Отправка данных в модем */
-		if(SG1_len_L2 != write(tty_handle, buffer2, SG1_len_L2)){
+	//	buffer2[50] = ~buffer2[50];
+	//	buffer2[52] = ~buffer2[52];
+		
+		for (int i = 6; i < 6 + SG1_len_L3 - 1; i++){
+			crc += buffer2[i];
+		}
+		buffer2[6 + SG1_len_L3 - 1] = ~crc + 1;
+		
+	
+		// Отправка данных в модем
+		int l = write(tty_handle, buffer2, SG1_len_L3 + 6);
+		if(SG1_len_L3 + 6 != l){
 			E_INFO("error write to COM-port\n");
 		}
+	
+	
+//		int l = fwrite(&buffer2[10], sizeof(unsigned char), n_frames_for_out * frame_samples, (FILE*)tty_handle);
+		
+	// ВАРИАНТ 1:
+	/*
+		//unsigned short L133 = 128+5;
+		//memcpy(&buffer2[4], &L133, sizeof(L133));
+
+		//memcpy(&BUFFER[15 + s*(L133+6) + 4], &buffer2[4], L133);
+		//memcpy(&BUFFER[4], &buffer2[4], L133);
+		
+		//BUFFER[15 + (L133+6)*s+50] = ~BUFFER[15 + (L133+6)*s+50];
+		//BUFFER[50] = ~BUFFER[50];
+
+
+
+		crc = 0;
+		for (int j = 6; j < 6 + L133 - 1; j++){
+			//crc += BUFFER[15 + s*(L133+6) + j];
+			//crc += BUFFER[j];
+			crc+=buffer2[j];
+		}
+       // BUFFER[15 + s*(L133+6) + 6 + L133 - 1] = ~crc + 1;
+		//BUFFER[6 + L133 - 1] = ~crc + 1;
+		buffer2[6 + L133 - 1] = ~crc + 1;
+		E_INFO_NOFN("(%d)%02X]",L133,(~crc + 1) & 0xFF);
+
+		//int l = write(tty_handle, &BUFFER[15 + (L133+6)*s], (L133+6));
+		//int l = write(tty_handle, BUFFER, (L133+6));
+		int l = write(tty_handle, buffer2, (L133+6));
+
+		for (size_t i = 0; i < 10; i++)
+		{
+			E_INFO_NOFN("%02x ",BUFFER[i]);
+		}
+		E_INFO_NOFN("\n");
+		E_INFO("s: %d l: %d\n",s,l);
+	*/
+		E_INFO("s: %d l: %d\n",s,l);
 	}
+out:
+	free(buffer1);
+	free(c_frame);
+	free(buffer2);
 		
     return 0;
 }
@@ -282,6 +378,7 @@ int send_voice_from_channel_to_socket(short vocoder_identification, int tty_hand
 		/ Первые четыре байта несут информацию  о адресе модема, порядковом номере фрейма и т.д.
 		/ Эту информацию никак не обрабатываем, пробрасываем
 		*/
+
 		for (int i = 0; i < 4; i++)
 		{
 			n_read_bytes = read(tty_handle, &byte, 1);
@@ -297,7 +394,6 @@ int send_voice_from_channel_to_socket(short vocoder_identification, int tty_hand
 			crc += byte;
 			count_bytes += n_read_bytes;
 		}
-            
 
 		while(count_bytes < size_block - 1){
 
