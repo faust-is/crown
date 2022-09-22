@@ -14,7 +14,6 @@
 #include "convert.h"
 
 const unsigned int marker =  0x99699699;
-const unsigned int size_buf = 128;
 
 /* Sleep for specified msec */
 static void
@@ -33,7 +32,8 @@ sleep_msec(int32_t ms)
 #endif
 }
 
-int send_command(short unsigned int time, int handle){
+int
+send_command(short unsigned int time, int handle){
 
 	unsigned char command[15] = { 
 		0x99, // Маркер
@@ -72,13 +72,6 @@ int send_command(short unsigned int time, int handle){
 	return write(handle, &command,15);
 }
 
-
-//struct pthread_arg
-//{
-//	int handle;
-//	short *ptr;
-//	int len;
-//};
 
 static unsigned int SG1_count_voice_frame = 0; //
 static unsigned char SG1_count_com = 1; // номер команды
@@ -119,6 +112,7 @@ write_SG1_alaw(int tty_handle, unsigned char * data, int len){
 	}
 	free(buffer2);
 }
+
 
 void
 write_SG1_pcm(int tty_handle, const short * data, int len){
@@ -161,19 +155,281 @@ write_SG1_pcm(int tty_handle, const short * data, int len){
 	free(buffer2);
 }
 
-//void* pthread_write_SG1(void * data){
-//
-//	struct pthread_arg *in = (struct pthread_arg *)data;
-//	write_SG1(in->handle, in->ptr, in->len);
-//	pthread_exit(0);
-//}
 
+struct pthread_arg
+{
+	int handle;
+	short *data;
+	unsigned int size;
+};
+
+/* Потоковая функция */
+void* pthread_write_SG1_pcm(void * data){
+
+	struct pthread_arg *in = (struct pthread_arg *)data;
+	int still_128 = in->size / 128;
+
+	/* записываем блоками по 128 */
+	for (int i = 0; i < still_128; i++){
+		write_SG1_pcm(in->handle, &in->data[128*i], 128);
+	}
+
+	pthread_exit(0);
+}
+
+
+
+int
+recv_voice_from_sock_to_channel(short vocoder_identification, int handle, recv_from_handler receiving, int n_frames){
+
+	
+	pthread_t thread;
+
+	
+	// vocoder initialization and memory allocation
+	
+    
+	size_t frame_sp = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_ENCODER);
+    size_t frame_cbit = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_DECODER);
+
+    if ((frame_sp == 0) || (frame_cbit == 0)) {
+        E_FATAL("Cannot determine IO size for codec %d\n", vocoder_identification);
+        return -1;
+    }
+
+    if (vocoder_library_setup()) {
+        E_FATAL("cannot setup library for codec %d\n", vocoder_identification);
+        return -1;
+    }
+
+    void *dec = vocoder_create(vocoder_identification, VOCODER_DIRECTION_DECODER);
+    if (dec == NULL) {
+        E_FATAL("codec %d cannot be created\n", vocoder_identification);
+        vocoder_library_destroy();
+        return -1;
+    }
+
+	// делаем 2 буфера, работаем поочередно с ними
+    short * buffer1 = (short *)malloc(frame_sp*(n_frames + 1));
+	short * buffer2 = (short *)malloc(frame_sp*(n_frames + 1));
+
+	short *b1, *b2;
+
+
+    unsigned char * c_frame = (unsigned char *)malloc(frame_cbit * n_frames);
+
+	size_t frame_samples = frame_sp / sizeof(buffer1[0]);
+	E_INFO("frame_cbit: %zu frame_sp: %zu\n",frame_cbit, frame_sp);
+
+	
+	int tail = 0; // длина хвоста
+	for (int s = 0;;s++)
+	{
+		
+		receiving(c_frame, frame_cbit*n_frames);
+		// TODO: запись 20 сек
+		if(s == 0){
+			sleep_msec(100);
+			if(send_command(20, handle) < 0){
+				E_FATAL("failed send command to SG1%s\n");
+			}
+		}
+
+		// В зависимости от номера прохода выбираем буфер
+		if(s & 1){
+			b1 = buffer1;
+			b2 = buffer2;
+		}else{
+			b1 = buffer2;
+			b2 = buffer1;
+		}
+
+
+		int status, even_128, odd_128, i;
+		for (i = 0, even_128 = 0, odd_128 = 0; i < n_frames; i++)
+		{
+
+			// В зависимости от номера прохода выбираем буфер
+			status = vocoder_process(dec, &c_frame[frame_cbit*i], &b1[tail + frame_samples*i]);
+
+
+			if (status < 0 ) 
+			{
+				E_FATAL("decoder failed, status = %d\n", status);
+				goto out;
+			}
+
+			// количество блоков (по 128), готовое для записи
+			even_128 = ((tail + frame_samples*(i + 1)) / 128) - odd_128;
+
+			if(even_128){
+				
+				// Если данные ранее уже отправлялись в модем, нужно дождаться их записи
+				if(s) pthread_join(thread, NULL);
+
+				struct pthread_arg pthread_data = { handle, &b1[128 * odd_128], 128 * even_128 };
+				pthread_create(&thread, NULL, pthread_write_SG1_pcm, &pthread_data);
+
+				odd_128 += even_128;
+			
+//				for (int j = 0; j < even_128; j++){
+//					write_SG1_pcm(handle, &buffer1[128 * (odd_128 + j)], 128);
+//					E_INFO("write: i = %d, j = %d, tail = %d\n",i,j, tail);
+//				}
+//				odd_128 += even_128;
+
+				
+			}
+		}
+
+
+		// Перемещаем хвост в начало буфера
+		tail = (tail + n_frames * frame_samples) % 128;
+		memcpy(&b2[0], &b1[(n_frames * frame_samples) - tail], tail);
+		}
+out:
+	free(buffer1);
+	free(buffer2);
+	free(c_frame);
+
+    return 0;
+}
+
+
+int
+recv_voice_from_sock_to_file(short vocoder_identification, FILE* file, recv_from_handler receiving, int n_frames){
+
+	
+	//pthread_t thread;
+
+	
+	// vocoder initialization and memory allocation
+	
+    
+	size_t frame_sp = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_ENCODER);
+    size_t frame_cbit = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_DECODER);
+
+    if ((frame_sp == 0) || (frame_cbit == 0)) {
+        E_FATAL("Cannot determine IO size for codec %d\n", vocoder_identification);
+        return -1;
+    }
+
+    if (vocoder_library_setup()) {
+        E_FATAL("cannot setup library for codec %d\n", vocoder_identification);
+        return -1;
+    }
+
+    void *dec = vocoder_create(vocoder_identification, VOCODER_DIRECTION_DECODER);
+    if (dec == NULL) {
+        E_FATAL("codec %d cannot be created\n", vocoder_identification);
+        vocoder_library_destroy();
+        return -1;
+    }
+
+	// делаем 2 буфера, работаем поочередно с ними
+    short * buffer1 = (short *)malloc(frame_sp*(n_frames + 1));
+	short * buffer2 = (short *)malloc(frame_sp*(n_frames + 1));
+
+	short *b1, *b2;
+
+
+    unsigned char * c_frame = (unsigned char *)malloc(frame_cbit * n_frames);
+
+	size_t frame_samples = frame_sp / sizeof(buffer1[0]);
+	E_INFO("frame_cbit: %zu frame_sp: %zu\n",frame_cbit, frame_sp);
+
+	
+	int tail = 0; // длина хвоста
+	for (int s = 0;;s++)
+	{
+		
+		receiving(c_frame, frame_cbit*n_frames);
+		/*
+		// TODO: запись 20 сек
+		if(s == 0){
+			sleep_msec(500);
+			if(send_command(20, handle) < 0){
+				E_FATAL("failed send command to SG1%s\n");
+			}
+		}
+		*/
+		// В зависимости от номера прохода выбираем буфер
+		if(s & 1){
+			b1 = buffer1;
+			b2 = buffer2;
+		}else{
+			b1 = buffer2;
+			b2 = buffer1;
+		}
+
+
+		int status, even_128, odd_128, i;
+		for (i = 0, even_128 = 0, odd_128 = 0; i < n_frames; i++)
+		{
+
+			// В зависимости от номера прохода выбираем буфер
+			status = vocoder_process(dec, &c_frame[frame_cbit*i], &b1[tail + frame_samples*i]);
+
+
+			if (status < 0 ) 
+			{
+				E_FATAL("decoder failed, status = %d\n", status);
+				goto out;
+			}
+
+			// количество блоков (по 128), готовое для записи
+			even_128 = ((tail + frame_samples*(i + 1)) / 128) - odd_128;
+
+			if(even_128){
+				
+				// Если данные ранее уже отправлялись в модем, нужно дождаться их записи
+//				if(s) pthread_join(thread, NULL);
+
+//				struct pthread_arg pthread_data = { handle, &b1[128 * odd_128], 128 * even_128 };
+//				pthread_create(&thread, NULL, pthread_write_SG1_pcm, &pthread_data);
+//
+//				odd_128 += even_128;
+			
+//				for (int j = 0; j < even_128; j++){
+//					write_SG1_pcm(handle, &buffer1[128 * (odd_128 + j)], 128);
+//					E_INFO("write: i = %d, j = %d, tail = %d\n",i,j, tail);
+//				}
+				unsigned char * b3 = (unsigned char*)malloc(128 * even_128);
+				
+				// Преобразование PCM в Alaw
+				for (int j = 0; j < 128 * even_128; j++){
+					b3[j] = linear2alaw(b1[128 * odd_128 + j]);
+				}
+
+				int l = fwrite(b3, sizeof(b3[0]), 128 * even_128, file);
+				//int l = fwrite(&b1[128 * odd_128], sizeof(b1[0]), 128 * even_128, file);
+				odd_128 += even_128;
+
+				
+			}
+		}
+
+
+		// Перемещаем хвост в начало буфера
+		tail = (tail + n_frames * frame_samples) % 128;
+		memcpy(&b2[0], &b1[(n_frames * frame_samples) - tail], tail);
+		}
+out:
+	free(buffer1);
+	free(buffer2);
+	free(c_frame);
+
+    return 0;
+}
+
+/*
+// Первый рабочий вариант 
 int
 recv_voice_from_sock_to_channel(short vocoder_identification, int tty_handle, recv_from_handler receiving, int n_frames){
 
-	/*
-	/ vocoder initialization and memory allocation
-	*/
+	
+	// vocoder initialization and memory allocation
+	
     
 	size_t frame_sp = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_ENCODER);
     size_t frame_cbit = vocoder_get_input_size(vocoder_identification, VOCODER_DIRECTION_DECODER);
@@ -250,7 +506,7 @@ recv_voice_from_sock_to_channel(short vocoder_identification, int tty_handle, re
 
 		}
 
-		/* Перемещаем хвост в начало буфера */
+		// Перемещаем хвост в начало буфера
 		tail = (tail + n_frames * frame_samples) % 128;
 		memcpy(buffer1, &buffer1[(n_frames * frame_samples) - tail], tail);
 
@@ -261,64 +517,8 @@ out:
 
     return 0;
 }
-	
-	/*	
-		// Расчет CRC
-		unsigned char crc = 0;
-	// ВАРИАНТ 2:
-		for (int i = 6; i < 6 + SG1_len_L3 - 1; i++){
-			crc += buffer2[i];
-		}
-		buffer2[6 + SG1_len_L3 - 1] = ~crc + 1;
-		
-	
-		// Отправка данных в модем
-		int l = write(tty_handle, buffer2, SG1_len_L3 + 6);
-		if(SG1_len_L3 + 6 != l){
-			E_INFO("error write to COM-port\n");
-		}
-	*/
 
-		//int l = fwrite(&buffer2[10], sizeof(unsigned char), n_frames_for_out * frame_samples, (FILE*)tty_handle);
-		
-	// ВАРИАНТ 1:
-	/*
-		//unsigned short L133 = 128+5;
-		//memcpy(&buffer2[4], &L133, sizeof(L133));
-
-		//memcpy(&BUFFER[15 + s*(L133+6) + 4], &buffer2[4], L133);
-		//memcpy(&BUFFER[4], &buffer2[4], L133);
-		
-		//BUFFER[15 + (L133+6)*s+50] = ~BUFFER[15 + (L133+6)*s+50];
-		//BUFFER[50] = ~BUFFER[50];
-
-
-
-		crc = 0;
-		for (int j = 6; j < 6 + L133 - 1; j++){
-			//crc += BUFFER[15 + s*(L133+6) + j];
-			//crc += BUFFER[j];
-			crc+=buffer2[j];
-		}
-       // BUFFER[15 + s*(L133+6) + 6 + L133 - 1] = ~crc + 1;
-		//BUFFER[6 + L133 - 1] = ~crc + 1;
-		buffer2[6 + L133 - 1] = ~crc + 1;
-		E_INFO_NOFN("(%d)%02X]",L133,(~crc + 1) & 0xFF);
-
-		//int l = write(tty_handle, &BUFFER[15 + (L133+6)*s], (L133+6));
-		//int l = write(tty_handle, BUFFER, (L133+6));
-		int l = write(tty_handle, buffer2, (L133+6));
-
-		for (size_t i = 0; i < 10; i++)
-		{
-			E_INFO_NOFN("%02x ",BUFFER[i]);
-		}
-		E_INFO_NOFN("\n");
-		E_INFO("s: %d l: %d\n",s,l);
-	*/
-		//E_INFO("s: %d l: %d\n",s,l);
-
-
+*/
 int send_voice_from_channel_to_socket(short vocoder_identification, int tty_handle, send_to_handler sending, int n_frames_for_out){
         
 	int n_read_bytes;
