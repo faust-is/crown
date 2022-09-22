@@ -158,7 +158,7 @@ static ssize_t recv_from_socket(char* buffer, size_t size_buf){
 	ssize_t size_reading = recvfrom(sock_handle, (char *)buffer, size_buf, 
                 MSG_WAITALL, (struct sockaddr *) &sock_client,
                 &size_from_client);
-	E_INFO("rec: %ld / %d\n",size_reading, size_from_client);
+	//E_INFO("rec: %ld / %d\n",size_reading, size_from_client);
 	return 0;
 }
 
@@ -214,7 +214,7 @@ int main(int argc, char *argv[])
 	
 	if(config.is_tx){
 		// TODO: запись 10 сек
-		if(send_command(10, tty_handle) < 0){
+		if(send_command(20, tty_handle) < 0){
 			E_FATAL("failed send command to SG1%s\n");
 		}
 		send_voice_from_channel_to_socket(config.vocoder_identification, tty_handle, send_to_socket, config.number_block_for_out);

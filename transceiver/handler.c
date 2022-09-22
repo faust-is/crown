@@ -6,7 +6,7 @@
 #include <sys/resource.h>
 #include <sys/time.h>
 #include <signal.h>
-//#include <semaphore.h>
+//#include <pthread.h>
 
 #include "handler.h"
 #include "wav.h"
@@ -15,9 +15,22 @@
 
 const unsigned int marker =  0x99699699;
 
+/* Sleep for specified msec */
+static void
+sleep_msec(int32_t ms)
+{
+#if (defined(_WIN32) && !defined(GNUWINCE)) || defined(_WIN32_WCE)
+    Sleep(ms);
+#else
+    /* ------------------- Unix ------------------ */
+    struct timeval tmo;
 
-//static unsigned char _count1 = 2;
-//static unsigned short _count2 = 0;
+    tmo.tv_sec = 0;
+    tmo.tv_usec = ms * 1000;
+
+    select(0, NULL, NULL, NULL, &tmo);
+#endif
+}
 
 int send_command(short unsigned int time, int handle){
 
@@ -122,43 +135,72 @@ void send_voice_to_channel(FILE * rawfd, int samplerate, int tty_handle){
 }
 */
 
-//#include <fcntl.h>
 
-static unsigned int SG1_count_voice_frame = 0;
+//struct pthread_arg
+//{
+//	int handle;
+//	short *ptr;
+//	int len;
+//};
+
+static unsigned int SG1_count_voice_frame = 0; //
+static unsigned char SG1_count_com = 1; // номер команды
+
+
+//int write_SG1(int tty_handle, unsigned char * data, int len){
+static int write_SG1_pcm(int tty_handle, const short * data, int len){
+
+	int retval;
+	unsigned char * buffer2 = (unsigned char *)malloc(len + 11);
+
+	/* Транспортный уровень*/
+	memcpy(buffer2, &marker, 4);
+
+	unsigned short SG1_len_L3 = len + 5;
+	memcpy(&buffer2[4], &SG1_len_L3, sizeof(SG1_len_L3));
+	
+
+	/* Тело посылки прикладного уровня */
+	buffer2[6] = 0xA1; // адресс модема
+	buffer2[7] = (0x7F & ++SG1_count_com);
+
+	memcpy(&buffer2[8], &SG1_count_voice_frame, 2);
+	SG1_count_voice_frame++;
+
+	//
+//	memcpy(&buffer2[10], data,len);
+	for (int j = 0; j < len; j++){
+		buffer2[10 + j] = linear2alaw(data[j]);
+	}
+
+
+	/* Расчет CRC */
+	unsigned char crc = 0;
+	for (int i = 6; i < 6 + SG1_len_L3 - 1; i++){
+		crc += buffer2[i];
+	}
+	buffer2[6 + SG1_len_L3 - 1] = ~crc + 1;
+	
+
+	// Отправка данных в модем
+	retval = write(tty_handle, buffer2, SG1_len_L3 + 6);
+	if(SG1_len_L3 + 6 != retval){
+		E_INFO("error write to COM-port\n");
+	}
+	free(buffer2);
+
+	return retval;
+}
+
+//void* pthread_write_SG1(void * data){
+//
+//	struct pthread_arg *in = (struct pthread_arg *)data;
+//	write_SG1(in->handle, in->ptr, in->len);
+//	pthread_exit(0);
+//}
 
 int recv_voice_from_sock_to_channel(short vocoder_identification, int tty_handle, recv_from_handler receiving, int n_frames_for_out){
 
-/*
-	unsigned char *BUFFER;
-	int descriptor = open("log1.bin", O_RDONLY);
-    struct stat statistics;
-    if (descriptor != -1) {
-        FILE *file = fdopen(descriptor, "rb");
-
-        if (file) {
-            if (fstat(descriptor, &statistics) != -1) {
-                BUFFER = (char*)malloc(statistics.st_size);
-
-                int n_read_bytes = fread(BUFFER, 1, statistics.st_size, file);
-                if(statistics.st_size != n_read_bytes){
-                    E_INFO("Error reading file\n");
-                    exit(0);
-                }else{
-                    E_INFO("file read!\n");
-                }
-
-            }else{
-                E_INFO("error fstat\n");
-            }
-            fclose(file);
-        }
-        close(descriptor);
-    }
-*/
-
-
-	// TODO:
-	unsigned char SG1_count_com = 1;
 	/*
 	/ vocoder initialization and memory allocation
 	*/
@@ -183,69 +225,75 @@ int recv_voice_from_sock_to_channel(short vocoder_identification, int tty_handle
         return -1;
     }
 
-    short * buffer1 = (short *)malloc(frame_sp);
+    short * buffer1 = (short *)malloc(frame_sp*(n_frames_for_out + 1));
     unsigned char * c_frame = (unsigned char *)malloc(frame_cbit * n_frames_for_out);
 
 
-	unsigned short frame_samples = frame_sp / 2;
-// TODO:
-//frame_samples = 540;
+	E_INFO("frame_cbit: %zu frame_sp: %zu\n",frame_cbit, frame_sp);
 
-	/* длина посылки прикладного уровня */
-	unsigned short SG1_len_L3 = n_frames_for_out * frame_samples + 5; // 4, n*len, 1
-
-	/* длина посылки транспортного уровня */
-	unsigned char * buffer2 = (unsigned char *)malloc(SG1_len_L3 + 6);
-
-	/* Транспортный уровень*/
+	//pthread_t thread;
+	//struct pthread_arg pthread_data;
+	//pthread_data.handle = tty_handle;
+	//pthread_data.ptr = buffer1;
+	//pthread_data.len = frame_sp/2;
 	
-	memcpy(buffer2, &marker, 4);
-	memcpy(&buffer2[4], &SG1_len_L3, sizeof(SG1_len_L3));
-	
-	for (int s = 0;s < 143;s++)
+
+	int tail = 0; // длина хвоста
+	for (int s = 0;;s++)
 	{
 		
 		receiving(c_frame, frame_cbit*n_frames_for_out);
 		// TODO: запись 10 сек
 		if(s == 0){
-			if(send_command(10, tty_handle) < 0){
+			//sleep_msec(1000);
+			if(send_command(20, tty_handle) < 0){
 				E_FATAL("failed send command to SG1%s\n");
 			}
 		}
+		//else{
+		//	pthread_join(thread, NULL);
+		//}
 
-
-		/* Тело посылки прикладного уровня */
-		{
-			buffer2[6] = 0xA1; // адресс модема
-			//buffer2[7] = (0x7F & SG1_count_com++) | 0x80;
-			buffer2[7] = (0x7F & ++SG1_count_com);
-			memcpy(&buffer2[8], &SG1_count_voice_frame, 2);
-
-			SG1_count_voice_frame++;
-			
-			int status;
-			for (int i = 0; i < n_frames_for_out; i++)
-			{
-				status = vocoder_process(dec, &c_frame[i * frame_cbit], buffer1);
-				if (status < 0 ) 
-				{
-				    E_FATAL("decoder failed, status = %d\n", status);
-				    goto out;
-				}
-
-				for (int j = 0; j < frame_samples; j++){
-					buffer2[10 + i*frame_samples + j] = linear2alaw(buffer1[j]);
-				}
-			}
-		}
 		
-		/* Расчет CRC */
+		int status, j = 0;
+		// TODO: многопточность только для одного блока 
+		for (int i = 0; i < n_frames_for_out; i++)
+		{
+			status = vocoder_process(dec, &c_frame[i * frame_cbit], buffer1);
+			// TODO: размер буфера на 1 блок больше
+			//status = vocoder_process(dec, &c_frame[frame_cbit*i], &buffer1[tail + (frame_sp/2)*i]);
+			if (status < 0 ) 
+			{
+				E_FATAL("decoder failed, status = %d\n", status);
+				goto out;
+			}
+
+
+			for( ; 128*(j+1) <= tail + (frame_sp / 2)*(i+1) ; j++){
+				write_SG1_pcm(tty_handle, &buffer1[128*j], 128);
+				E_INFO("write: i = %d, j = %d, tail = %d\n",i,j, tail);
+			}
+
+			
+
+
+			//write_SG1_pcm(tty_handle, buffer1, frame_sp / 2);
+			//запускаем поток
+			//pthread_create(&thread, NULL, pthread_write_SG1, &pthread_data);
+
+			/*
+			for (int j = 0; j < frame_samples; j++){
+				buffer2[10 + i*frame_samples + j] = linear2alaw(buffer1[j]);
+			}
+			*/
+		}
+		tail = (tail + (n_frames_for_out * frame_sp / 2)) % 128;
+		memcpy(buffer1, &buffer1[(n_frames_for_out * frame_sp / 2) - tail], tail);
+		
+	/*	
+		// Расчет CRC
 		unsigned char crc = 0;
 	// ВАРИАНТ 2:
-
-	//	buffer2[50] = ~buffer2[50];
-	//	buffer2[52] = ~buffer2[52];
-		
 		for (int i = 6; i < 6 + SG1_len_L3 - 1; i++){
 			crc += buffer2[i];
 		}
@@ -257,9 +305,9 @@ int recv_voice_from_sock_to_channel(short vocoder_identification, int tty_handle
 		if(SG1_len_L3 + 6 != l){
 			E_INFO("error write to COM-port\n");
 		}
-	
-	
-//		int l = fwrite(&buffer2[10], sizeof(unsigned char), n_frames_for_out * frame_samples, (FILE*)tty_handle);
+	*/
+
+		//int l = fwrite(&buffer2[10], sizeof(unsigned char), n_frames_for_out * frame_samples, (FILE*)tty_handle);
 		
 	// ВАРИАНТ 1:
 	/*
@@ -296,12 +344,12 @@ int recv_voice_from_sock_to_channel(short vocoder_identification, int tty_handle
 		E_INFO_NOFN("\n");
 		E_INFO("s: %d l: %d\n",s,l);
 	*/
-		E_INFO("s: %d l: %d\n",s,l);
+		//E_INFO("s: %d l: %d\n",s,l);
 	}
 out:
 	free(buffer1);
 	free(c_frame);
-	free(buffer2);
+
 		
     return 0;
 }
