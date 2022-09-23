@@ -242,19 +242,19 @@ int main(int argc, char *argv[])
 		
 	/*
 		FILE *f = NULL;
-		f = fopen("test.wav", "w");
+		f = fopen("test_pcm_pila.wav", "w");
 		if (f == NULL)
 			E_FATAL_SYSTEM("Failed to open file for writing");
 		else
 			E_INFO("yes!\n");
 
-		write_wav_stereo_header(f, SAMPLE_RATE, SAMPLE_RATE * 20, AUDIO_FORMAT_ALAW);
-		recv_voice_from_sock_to_channel(config.vocoder_identification, f, recv_from_socket, config.number_block_for_out);
+		write_wav_stereo_header(f, SAMPLE_RATE, SAMPLE_RATE * 5, AUDIO_FORMAT_PCM);
+		recv_voice_from_sock_to_file(config.vocoder_identification, f, recv_from_socket, config.number_block_for_out);
 		fclose(f);
-	*/
+	
 		// TODO: =======================END ===============================
-
-
+	*/
+	
 		recv_voice_from_sock_to_channel(config.vocoder_identification, tty_handle, recv_from_socket, config.number_block_for_out);
 
 	}

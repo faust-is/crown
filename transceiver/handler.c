@@ -222,7 +222,7 @@ recv_voice_from_sock_to_channel(short vocoder_identification, int handle, recv_f
 	E_INFO("frame_cbit: %zu frame_sp: %zu\n",frame_cbit, frame_sp);
 
 	
-	int tail = 0; // длина хвоста
+	int tail0, tail = 0; // длина хвоста
 	for (int s = 0;;s++)
 	{
 		
@@ -282,10 +282,10 @@ recv_voice_from_sock_to_channel(short vocoder_identification, int handle, recv_f
 			}
 		}
 
-
 		// Перемещаем хвост в начало буфера
-		tail = (tail + n_frames * frame_samples) % 128;
-		memcpy(&b2[0], &b1[(n_frames * frame_samples) - tail], tail);
+		tail0 = (tail + n_frames * frame_samples) % 128;
+		memcpy(b2, &b1[tail + (n_frames * frame_samples) - tail0], sizeof(short)*tail0);
+		tail = tail0;
 		}
 out:
 	free(buffer1);
@@ -335,11 +335,12 @@ recv_voice_from_sock_to_file(short vocoder_identification, FILE* file, recv_from
 
     unsigned char * c_frame = (unsigned char *)malloc(frame_cbit * n_frames);
 
-	size_t frame_samples = frame_sp / sizeof(buffer1[0]);
+	size_t frame_samples = frame_sp / 2;
 	E_INFO("frame_cbit: %zu frame_sp: %zu\n",frame_cbit, frame_sp);
 
 	
 	int tail = 0; // длина хвоста
+	int tail0;
 	for (int s = 0;;s++)
 	{
 		
@@ -353,6 +354,7 @@ recv_voice_from_sock_to_file(short vocoder_identification, FILE* file, recv_from
 			}
 		}
 		*/
+	
 		// В зависимости от номера прохода выбираем буфер
 		if(s & 1){
 			b1 = buffer1;
@@ -361,14 +363,20 @@ recv_voice_from_sock_to_file(short vocoder_identification, FILE* file, recv_from
 			b1 = buffer2;
 			b2 = buffer1;
 		}
-
+	
 
 		int status, even_128, odd_128, i;
-		for (i = 0, even_128 = 0, odd_128 = 0; i < n_frames; i++)
+		even_128 = 0;
+		odd_128 = 0;
+		for (i = 0; i < n_frames; i++)
 		{
 
 			// В зависимости от номера прохода выбираем буфер
-			status = vocoder_process(dec, &c_frame[frame_cbit*i], &b1[tail + frame_samples*i]);
+			status = vocoder_process(dec, &c_frame[frame_cbit*i], &b1[tail + (frame_samples*i)]);
+
+			for(int g = 0; g < frame_samples; g++ ){
+				b1[tail + (frame_samples*i) + g] = 50*g;
+			}
 
 
 			if (status < 0 ) 
@@ -387,32 +395,37 @@ recv_voice_from_sock_to_file(short vocoder_identification, FILE* file, recv_from
 
 //				struct pthread_arg pthread_data = { handle, &b1[128 * odd_128], 128 * even_128 };
 //				pthread_create(&thread, NULL, pthread_write_SG1_pcm, &pthread_data);
-//
-//				odd_128 += even_128;
-			
+
+		
 //				for (int j = 0; j < even_128; j++){
 //					write_SG1_pcm(handle, &buffer1[128 * (odd_128 + j)], 128);
 //					E_INFO("write: i = %d, j = %d, tail = %d\n",i,j, tail);
 //				}
-				unsigned char * b3 = (unsigned char*)malloc(128 * even_128);
+				//unsigned char * b3 = (unsigned char*)malloc(128 * even_128);
 				
 				// Преобразование PCM в Alaw
-				for (int j = 0; j < 128 * even_128; j++){
-					b3[j] = linear2alaw(b1[128 * odd_128 + j]);
-				}
+				//for (int j = 0; j < 128 * even_128; j++){
+				//	b3[j] = linear2alaw(b1[128 * odd_128 + j]);
+				//}
 
-				int l = fwrite(b3, sizeof(b3[0]), 128 * even_128, file);
-				//int l = fwrite(&b1[128 * odd_128], sizeof(b1[0]), 128 * even_128, file);
+				//int l = fwrite(buffer1, 1, frame_sp, file);
+				int l = fwrite(&b1[128 * odd_128], sizeof(short), 128 * even_128, file);
+				E_INFO_NOFN("[%d\t%d]\n",b1[128 * odd_128],b1[128 * (odd_128 + even_128) - 1]);
 				odd_128 += even_128;
 
 				
 			}
 		}
 
+		// Перемещаем хвост в начало буфера
+		tail0 = (tail + n_frames * frame_samples) % 128;
+		memcpy(b2, &b1[tail + (n_frames * frame_samples) - tail0], sizeof(short)*tail0);
+		tail = tail0;
 
 		// Перемещаем хвост в начало буфера
-		tail = (tail + n_frames * frame_samples) % 128;
-		memcpy(&b2[0], &b1[(n_frames * frame_samples) - tail], tail);
+		//tail = (tail + n_frames * frame_samples) % 128;
+		//memcpy(b2, &b1[(n_frames * frame_samples) - tail], sizeof(short)*tail);
+
 		}
 out:
 	free(buffer1);
