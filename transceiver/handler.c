@@ -43,6 +43,41 @@ sleep_msec(int32_t ms)
 #endif
 }
 
+//#ifdef notdef 
+struct timeval point0;
+struct timeval point1;
+
+long
+timeval_diff(struct timeval *difference,
+             struct timeval *end_time,
+             struct timeval *start_time
+            )
+{
+  struct timeval temp_diff;
+
+  if(difference==NULL)
+  {
+    difference=&temp_diff;
+  }
+
+  difference->tv_sec =end_time->tv_sec -start_time->tv_sec ;
+  difference->tv_usec=end_time->tv_usec-start_time->tv_usec;
+
+  // Using while instead of if below makes the code slightly more robust.
+
+  while(difference->tv_usec<0)
+  {
+    difference->tv_usec+=1000000;
+    difference->tv_sec -=1;
+  }
+
+  return (1000000LL* difference->tv_sec+
+                   difference->tv_usec) / 1000;
+
+} // timeval_diff()
+//#endif
+
+
 int
 send_command(uint16_t time, int handle, bool started){
 
@@ -239,7 +274,26 @@ sock_to_channel(short vocoder_identification, int handle, recv_from_handler rece
 
 	for (s = 0, tail = 0; !g_stopped; s++)
 	{
-		receiving(c_frame, frame_cbit*n_frames);
+
+	//	gettimeofday(&point0,NULL);
+	wait_loop:
+		if(g_stopped)
+			break;
+
+		ssize_t retval = receiving(c_frame, frame_cbit*n_frames);
+		if (retval < 0) {
+            if (errno == EWOULDBLOCK) {
+                sleep_msec(100);
+                goto wait_loop; // no UDP packet yet
+            }
+			E_ERROR("failed to receive UDP packet: %s",strerror(errno));
+        }
+	//	E_INFO("rec: %ld\n",retval);
+	//	gettimeofday(&point1,NULL);
+
+		E_INFO_NOFN("%d. rec %zu [%d.%06d s]\n",s, retval, point1.tv_sec, point1.tv_usec);
+		//E_INFO_NOFN("%d.\t%d.%06d\n",s, point1.tv_sec, point1.tv_usec);
+
 		if(!s){
 			if(send_command(1000, handle, true) < 0){
 				E_FATAL("failed send command to SG1%s\n");
@@ -350,7 +404,7 @@ int channel_to_socket(short vocoder_identification, int tty_handle, send_to_hand
 	/*
 	/ Отправляем в модем команду на выдачу выборки в течении INT16_MAX сек
 	*/
-	if(send_command(10, tty_handle, true) != 15){
+	if(send_command(90, tty_handle, true) != 15){
 		E_FATAL("failed send command to SG1%s\n");
 	}
 	else{
@@ -477,7 +531,8 @@ int channel_to_socket(short vocoder_identification, int tty_handle, send_to_hand
 	}
    
 out:
-	if(send_command(10, tty_handle, false) != 15){
+//sleep_msec(3000);
+	if(send_command(90, tty_handle, false) != 15){
 		E_FATAL("failed send command to SG1: off\n");
 	}
 	else{
@@ -497,40 +552,6 @@ out:
     return 0;
 }
 
-/*
-struct timeval y1;
-struct timeval y2;
-struct timeval y3;
-
-double
-timeval_diff(struct timeval *difference,
-             struct timeval *end_time,
-             struct timeval *start_time
-            )
-{
-  struct timeval temp_diff;
-
-  if(difference==NULL)
-  {
-    difference=&temp_diff;
-  }
-
-  difference->tv_sec =end_time->tv_sec -start_time->tv_sec ;
-  difference->tv_usec=end_time->tv_usec-start_time->tv_usec;
-
-  // Using while instead of if below makes the code slightly more robust.
-
-  while(difference->tv_usec<0)
-  {
-    difference->tv_usec+=1000000;
-    difference->tv_sec -=1;
-  }
-
-  return (1000000LL* difference->tv_sec+
-                   difference->tv_usec) / 1000;
-
-} // timeval_diff()
-*/
 
 /*
 struct pthread_arg

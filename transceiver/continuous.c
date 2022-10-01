@@ -136,13 +136,17 @@ int set_serial_attrs(int tty_handle, speed_t speed, struct termios * tty_orig){
 
 static struct sockaddr_in sock_proxy, sock_client;
 static int sock_handle;
-
+// TODO:
+//int s = 0;
+//struct timeval point1;
 static ssize_t send_to_socket(const char* data, size_t size){
 
-	E_INFO("sending %zu bytes to socket\n", size);
+	//gettimeofday(&point1,NULL);
+	//E_INFO_NOFN("%d.\t%d.%06d\n",s++, point1.tv_sec, point1.tv_usec);
+	E_INFO("sending [%d] %zu bytes to %s:%d\n", sock_handle, size, inet_ntoa(sock_proxy.sin_addr), ntohs(sock_proxy.sin_port));
 
 	return sendto(sock_handle, data, size,
-    MSG_CONFIRM, (const struct sockaddr *) &sock_proxy, 
+    0, (const struct sockaddr *) &sock_proxy, 
     sizeof(sock_proxy)); 
 }
 
@@ -152,8 +156,8 @@ static ssize_t recv_from_socket(char* buffer, size_t size_buf){
 	ssize_t size_reading = recvfrom(sock_handle, (char *)buffer, size_buf, 
                 0, (struct sockaddr *) &sock_client,
                 &size_from_client);
-	E_INFO("rec: %ld / %d\n",size_reading, size_from_client);
-	return 0;
+	//E_INFO("rec: %ld / %d\n",size_reading, size_from_client);
+	return size_reading;
 }
 
 
@@ -191,23 +195,25 @@ int main(int argc, char *argv[])
 	set_serial_attrs(tty_handle, (speed_t)B115200, &tty_orig);
 
 	/* open UDP socket*/
-	if((sock_handle = socket(AF_INET, SOCK_DGRAM, 0)) < 0){
-	//if((sock_handle = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP)) < 0){
+	//if((sock_handle = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0){
+	if((sock_handle = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP)) < 0){
 		E_FATAL("socket creation failed: %s\n", strerror(errno));
 	} 
+
 
 	/* set port and IP for UDP socket*/
 	memset (&sock_proxy, 0, sizeof(sock_proxy));
 	sock_proxy.sin_family = AF_INET; /* IPv4 */
 	sock_proxy.sin_port = htons(config.ip_port);
-	sock_proxy.sin_addr.s_addr = INADDR_ANY; //inet_addr(config.ip);
+	sock_proxy.sin_addr.s_addr = inet_addr(config.ip);
 
+	E_INFO("IPv4:%s:%d\n",inet_ntoa(sock_proxy.sin_addr),config.ip_port);
 
 	/* check IPv4 addres*/
 	if (sock_proxy.sin_addr.s_addr == INADDR_NONE ) {
     	E_FATAL("bad address: %s\n", config.ip);
  	}
-	
+
 	if(config.is_tx){
 		channel_to_socket(config.vocoder_identification, tty_handle, send_to_socket, config.number_block_for_out);
 	}else{
