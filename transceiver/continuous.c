@@ -1,25 +1,19 @@
 
 #include <string.h>
 #include <assert.h>
-//#if defined(_WIN32) && !defined(__CYGWIN__)
-//#include <windows.h>
-//#else
+#include <stdio.h>
+#include <stdlib.h>
 #include <sys/select.h>
-//#endif
-
+#include <sys/types.h>
+#include <sys/socket.h>
 #include <fcntl.h> // Contains file controls like O_RDWR
 #include <errno.h> // Error integer and strerror() function
 #include <termios.h> // Contains POSIX terminal control definitions
 #include <unistd.h> // write(), read(), close()
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/types.h>
-#include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <getopt.h>
-#include <stdbool.h>
+
 
 #include "err.h"
 #include "ini.h"
@@ -156,9 +150,9 @@ static ssize_t recv_from_socket(char* buffer, size_t size_buf){
 
 	int size_from_client;
 	ssize_t size_reading = recvfrom(sock_handle, (char *)buffer, size_buf, 
-                MSG_WAITALL, (struct sockaddr *) &sock_client,
+                0, (struct sockaddr *) &sock_client,
                 &size_from_client);
-	//E_INFO("rec: %ld / %d\n",size_reading, size_from_client);
+	E_INFO("rec: %ld / %d\n",size_reading, size_from_client);
 	return 0;
 }
 
@@ -169,6 +163,8 @@ int main(int argc, char *argv[])
 	configuration config;
 	static struct termios tty_orig;
 	int opt, tty_handle;
+
+	signal(SIGINT, sig_int_handler);
 
 	E_INFO("%s COMPILED ON: %s, AT: %s\n\n", argv[0], __DATE__, __TIME__);
     
@@ -213,11 +209,7 @@ int main(int argc, char *argv[])
  	}
 	
 	if(config.is_tx){
-		// TODO: запись 10 сек
-		if(send_command(20, tty_handle) < 0){
-			E_FATAL("failed send command to SG1%s\n");
-		}
-		send_voice_from_channel_to_socket(config.vocoder_identification, tty_handle, send_to_socket, config.number_block_for_out);
+		channel_to_socket(config.vocoder_identification, tty_handle, send_to_socket, config.number_block_for_out);
 	}else{
 		if(bind(sock_handle, (struct sockaddr*)&sock_proxy, sizeof(sock_proxy)) < 0) {
 			E_FATAL("failed to bind socket %s\n", strerror(errno));
@@ -242,20 +234,21 @@ int main(int argc, char *argv[])
 		
 	/*
 		FILE *f = NULL;
-		f = fopen("test_pcm_pila.wav", "w");
+		f = fopen("1200_5.wav", "w");
+		//f = fopen("1200_5.bin", "w");
 		if (f == NULL)
 			E_FATAL_SYSTEM("Failed to open file for writing");
 		else
 			E_INFO("yes!\n");
 
-		write_wav_stereo_header(f, SAMPLE_RATE, SAMPLE_RATE * 5, AUDIO_FORMAT_PCM);
+		write_wav_stereo_header(f, SAMPLE_RATE, SAMPLE_RATE * 20, AUDIO_FORMAT_PCM);
 		recv_voice_from_sock_to_file(config.vocoder_identification, f, recv_from_socket, config.number_block_for_out);
 		fclose(f);
-	
-		// TODO: =======================END ===============================
 	*/
+		// TODO: =======================END ===============================
 	
-		recv_voice_from_sock_to_channel(config.vocoder_identification, tty_handle, recv_from_socket, config.number_block_for_out);
+	
+		sock_to_channel(config.vocoder_identification, tty_handle, recv_from_socket, config.number_block_for_out);
 
 	}
 	
@@ -270,9 +263,9 @@ int main(int argc, char *argv[])
 	/* close serial port */
 	close(tty_handle);
 
-	// free config ini
-	//if(NULL != config.serial_port) free(config.serial_port);
-	//if(NULL != config.ip) free(config.ip);
+	/* free config ini */
+	free(config.serial_port);
+	free(config.ip);
 
     return 0;
 }
