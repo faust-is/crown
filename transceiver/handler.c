@@ -43,9 +43,10 @@ sleep_msec(int32_t ms)
 #endif
 }
 
-//#ifdef notdef 
+#ifdef notdef 
 struct timeval point0;
 struct timeval point1;
+
 
 long
 timeval_diff(struct timeval *difference,
@@ -75,7 +76,7 @@ timeval_diff(struct timeval *difference,
                    difference->tv_usec) / 1000;
 
 } // timeval_diff()
-//#endif
+#endif
 
 
 int
@@ -267,15 +268,14 @@ sock_to_channel(short vocoder_identification, int handle, recv_from_handler rece
 
 	size_t frame_samples = frame_sp / sizeof(int16_t);
 
-	
-	// инициализация мьютекса
 
 	E_INFO("frame_cbit: %zu frame_sp: %zu\n",frame_cbit, frame_sp);
 
 	for (s = 0, tail = 0; !g_stopped; s++)
 	{
-
-	//	gettimeofday(&point0,NULL);
+#ifdef notdef
+		gettimeofday(&point0,NULL);
+#endif
 	wait_loop:
 		if(g_stopped)
 			break;
@@ -288,14 +288,15 @@ sock_to_channel(short vocoder_identification, int handle, recv_from_handler rece
             }
 			E_ERROR("failed to receive UDP packet: %s",strerror(errno));
         }
-	//	E_INFO("rec: %ld\n",retval);
-	//	gettimeofday(&point1,NULL);
-
-		E_INFO_NOFN("%d. rec %zu [%d.%06d s]\n",s, retval, point1.tv_sec, point1.tv_usec);
-		//E_INFO_NOFN("%d.\t%d.%06d\n",s, point1.tv_sec, point1.tv_usec);
-
+		
+#ifdef notdef
+		gettimeofday(&point1,NULL);
+		E_INFO_NOFN("%d.\t%d.%06d\n",s, point1.tv_sec, point1.tv_usec);
+#else
+		E_INFO("rec: %ld\n",retval);
+#endif
 		if(!s){
-			if(send_command(1000, handle, true) < 0){
+			if(send_command(30, handle, true) < 0){
 				E_FATAL("failed send command to SG1%s\n");
 			}
 		}
@@ -346,7 +347,7 @@ sock_to_channel(short vocoder_identification, int handle, recv_from_handler rece
 out:
 	if(s){
 		pthread_join(thread, NULL);
-		if(send_command(1000, handle, false) < 0){
+		if(send_command(30, handle, false) < 0){
 			E_FATAL("failed send command to SG1: off\n");
 		}
 		else{
@@ -404,7 +405,7 @@ int channel_to_socket(short vocoder_identification, int tty_handle, send_to_hand
 	/*
 	/ Отправляем в модем команду на выдачу выборки в течении INT16_MAX сек
 	*/
-	if(send_command(90, tty_handle, true) != 15){
+	if(send_command(20, tty_handle, true) != 15){
 		E_FATAL("failed send command to SG1%s\n");
 	}
 	else{
@@ -532,7 +533,7 @@ int channel_to_socket(short vocoder_identification, int tty_handle, send_to_hand
    
 out:
 //sleep_msec(3000);
-	if(send_command(90, tty_handle, false) != 15){
+	if(send_command(20, tty_handle, false) != 15){
 		E_FATAL("failed send command to SG1: off\n");
 	}
 	else{

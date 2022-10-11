@@ -1,3 +1,13 @@
 *.so
 *.o
 *.a
+*.wav
+*.bin
+*.log
+*.txt
+
+.vscode
+transceiver/continuous
+transceiver/votest
+TETRA/scoder
+TETRA/sdecoder
