@@ -6,8 +6,6 @@
 #include <sys/resource.h>
 #include <sys/time.h>
 
-
-
 #include <pthread.h>
 
 #include "handler.h"
@@ -43,10 +41,6 @@ sleep_msec(int32_t ms)
 #endif
 }
 
-#ifdef notdef 
-struct timeval point0;
-struct timeval point1;
-
 
 long
 timeval_diff(struct timeval *difference,
@@ -76,8 +70,10 @@ timeval_diff(struct timeval *difference,
                    difference->tv_usec) / 1000;
 
 } // timeval_diff()
-#endif
 
+
+static unsigned int SG1_count_voice_frame = 0; //
+static uint8_t SG1_count_com = 1; // номер команды
 
 int
 send_command(uint16_t time, int handle, bool started){
@@ -100,6 +96,7 @@ send_command(uint16_t time, int handle, bool started){
 		0xdd  // Контрольная сумма // 0xdd
 	};
 
+	//command[7] = SG1_count_com++;
 	/*
 	/ On/off writing
 	*/
@@ -126,9 +123,6 @@ send_command(uint16_t time, int handle, bool started){
 }
 
 
-static unsigned int SG1_count_voice_frame = 0; //
-static unsigned char SG1_count_com = 1; // номер команды
-
 void
 write_SG1_alaw(int tty_handle, unsigned char * data, int len){
 	
@@ -143,7 +137,7 @@ write_SG1_alaw(int tty_handle, unsigned char * data, int len){
 
 	/* Тело посылки прикладного уровня */
 	buffer2[6] = 0xA1; // адресс модема
-	buffer2[7] = (0x7F & ++SG1_count_com);
+	buffer2[7] = (0x7F & SG1_count_com++);
 
 	memcpy(&buffer2[8], &SG1_count_voice_frame, 2);
 	SG1_count_voice_frame++;
@@ -181,7 +175,7 @@ write_SG1_pcm(int tty_handle, const int16_t * data, int len){
 
 	/* Тело посылки прикладного уровня */
 	buffer2[6] = 0xA1; // адресс модема
-	buffer2[7] = (0x7F & ++SG1_count_com);
+	buffer2[7] = (0x7F & SG1_count_com++);
 
 	memcpy(&buffer2[8], &SG1_count_voice_frame, 2);
 	SG1_count_voice_frame++;
@@ -230,12 +224,13 @@ void* pthread_write_SG1_pcm(void * data){
 }
 
 int
-sock_to_channel(short vocoder_identification, int handle, recv_from_handler receiving, int n_frames){
+sock_to_channel(uint16_t time, short vocoder_identification, int handle, recv_from_handler receiving, int n_frames){
 
 	
 	pthread_t thread;
 	int16_t *b1, *b2;
 	int s,tail0, tail; // длина хвоста
+	struct timeval point1;
 
 	// vocoder initialization and memory allocation
 	
@@ -273,9 +268,6 @@ sock_to_channel(short vocoder_identification, int handle, recv_from_handler rece
 
 	for (s = 0, tail = 0; !g_stopped; s++)
 	{
-#ifdef notdef
-		gettimeofday(&point0,NULL);
-#endif
 	wait_loop:
 		if(g_stopped)
 			break;
@@ -289,14 +281,12 @@ sock_to_channel(short vocoder_identification, int handle, recv_from_handler rece
 			E_ERROR("failed to receive UDP packet: %s",strerror(errno));
         }
 		
-#ifdef notdef
+		// Временная метка
 		gettimeofday(&point1,NULL);
-		E_INFO_NOFN("%d.\t%d.%06d\n",s, point1.tv_sec, point1.tv_usec);
-#else
-		E_INFO("rec: %ld\n",retval);
-#endif
+		E_INFO_NOFN("%d.\t%d.%06d\t%d bytes\n",s, point1.tv_sec, point1.tv_usec, frame_cbit*n_frames);
+
 		if(!s){
-			if(send_command(30, handle, true) < 0){
+			if(send_command(time, handle, true) < 0){
 				E_FATAL("failed send command to SG1%s\n");
 			}
 		}
@@ -347,7 +337,7 @@ sock_to_channel(short vocoder_identification, int handle, recv_from_handler rece
 out:
 	if(s){
 		pthread_join(thread, NULL);
-		if(send_command(30, handle, false) < 0){
+		if(send_command(time, handle, false) < 0){
 			E_FATAL("failed send command to SG1: off\n");
 		}
 		else{
@@ -365,10 +355,11 @@ out:
 
 
 
-int channel_to_socket(short vocoder_identification, int tty_handle, send_to_handler sending, int n_frames_for_out){
+int channel_to_socket(uint16_t time, short vocoder_identification, int tty_handle, send_to_handler sending, int n_frames_for_out){
         
-	int n_read_bytes;
+	int n_read_bytes, count_samples, count_frames, s;
 	uint16_t size_block;
+	struct timeval point1;
 
 	E_INFO("start send voice from serial port to socket\n");
 
@@ -405,7 +396,7 @@ int channel_to_socket(short vocoder_identification, int tty_handle, send_to_hand
 	/*
 	/ Отправляем в модем команду на выдачу выборки в течении INT16_MAX сек
 	*/
-	if(send_command(20, tty_handle, true) != 15){
+	if(send_command(time, tty_handle, true) != 15){
 		E_FATAL("failed send command to SG1%s\n");
 	}
 	else{
@@ -413,11 +404,7 @@ int channel_to_socket(short vocoder_identification, int tty_handle, send_to_hand
 	}
 
 
-
-	int count_samples = 0;
-	int count_frames = 0;
-
-	while(!g_stopped){
+	for (s = 0, count_samples = 0, count_frames = 0; !g_stopped; s++){
 
 		uint32_t tmarker;
 		uint8_t byte, crc;
@@ -511,6 +498,10 @@ int channel_to_socket(short vocoder_identification, int tty_handle, send_to_hand
 					if(sending(c_frame,frame_cbit * n_frames_for_out) != frame_cbit * n_frames_for_out){
 						E_FATAL("error: failed to send to socket\n");
 					}
+
+					gettimeofday(&point1,NULL);
+					E_INFO_NOFN("%d.\t%d.%06d\t%d bytes\n",s, point1.tv_sec, point1.tv_usec, frame_cbit * n_frames_for_out);
+
 				}
 				
 				count_samples = 0;
@@ -532,8 +523,8 @@ int channel_to_socket(short vocoder_identification, int tty_handle, send_to_hand
 	}
    
 out:
-//sleep_msec(3000);
-	if(send_command(20, tty_handle, false) != 15){
+sleep_msec(100);
+	if(send_command(time, tty_handle, false) != 15){
 		E_FATAL("failed send command to SG1: off\n");
 	}
 	else{

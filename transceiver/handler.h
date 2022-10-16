@@ -28,9 +28,8 @@ typedef ssize_t (*recv_from_handler)(char* data, size_t size);
 void write_SG1_alaw(int tty_handle, unsigned char * data, int len);
 void write_SG1_pcm(int tty_handle, const short * data, int len);
 
-
-int channel_to_socket(short vocoder_identification, int tty_handle, send_to_handler handler, int n_frames_for_out);
-int sock_to_channel(short vocoder_identification, int tty_handle, recv_from_handler receiving, int n_frames_for_out);
+int channel_to_socket(uint16_t time, short vocoder_identification, int tty_handle, send_to_handler handler, int n_frames_for_out);
+int sock_to_channel(uint16_t time, short vocoder_identification, int tty_handle, recv_from_handler receiving, int n_frames_for_out);
 
 void sig_int_handler(int val);
 

@@ -1,4 +1,3 @@
-
 #include <string.h>
 #include <assert.h>
 #include <stdio.h>
@@ -22,12 +21,13 @@
 // TODO:
 #include "wav.h"
 
+#define TIME_DEFAULT 30
 const char *const file_name_ini = "continuous.ini";
 
 // TODO: default setting
 typedef struct
 {
-	bool is_tx;
+	int is_tx;
 
     const char* serial_port;
     unsigned int vocoder_identification; // from rate
@@ -136,14 +136,8 @@ int set_serial_attrs(int tty_handle, speed_t speed, struct termios * tty_orig){
 
 static struct sockaddr_in sock_proxy, sock_client;
 static int sock_handle;
-// TODO:
-//int s = 0;
-//struct timeval point1;
-static ssize_t send_to_socket(const char* data, size_t size){
 
-	//gettimeofday(&point1,NULL);
-	//E_INFO_NOFN("%d.\t%d.%06d\n",s++, point1.tv_sec, point1.tv_usec);
-	E_INFO("sending [%d] %zu bytes to %s:%d\n", sock_handle, size, inet_ntoa(sock_proxy.sin_addr), ntohs(sock_proxy.sin_port));
+static ssize_t send_to_socket(const char* data, size_t size){
 
 	return sendto(sock_handle, data, size,
     0, (const struct sockaddr *) &sock_proxy, 
@@ -156,28 +150,50 @@ static ssize_t recv_from_socket(char* buffer, size_t size_buf){
 	ssize_t size_reading = recvfrom(sock_handle, (char *)buffer, size_buf, 
                 0, (struct sockaddr *) &sock_client,
                 &size_from_client);
-	//E_INFO("rec: %ld / %d\n",size_reading, size_from_client);
 	return size_reading;
 }
 
 
+static void print_usage(){
+	E_INFO_NOFN("\nplease, use:");
+	E_INFO_NOFN("--tx [flag for transmitter]\n");
+	E_INFO_NOFN("--rx [flag for receiver]\n");
+	E_INFO_NOFN("-t or --t [time for writenning from SG1 (in sec)]\n");
+}
+
 int main(int argc, char *argv[])
 {
 
-	configuration config;
+	static configuration config;
 	static struct termios tty_orig;
 	int opt, tty_handle;
+	int time = TIME_DEFAULT; /* default value in sec */
 
 	signal(SIGINT, sig_int_handler);
 
 	E_INFO("%s COMPILED ON: %s, AT: %s\n\n", argv[0], __DATE__, __TIME__);
     
-	/* parse command line arguments */
-	while ((opt = getopt(argc, argv, "rt")) != EOF) {
-		// TODO: getopt_long_only
+		/* parse command line arguments */
+	static struct option long_options[] =
+	{
+		{"tx", no_argument, &config.is_tx, 1},
+		{"t",required_argument, NULL, 't'},
+		{"rx", no_argument, &config.is_tx, 0},
+		{NULL, 0, NULL, 0}
+	};
+
+
+	while ((opt = getopt_long(argc, argv, "t:",long_options, NULL)) != EOF) {
 		switch (opt) {
-			case 'r': config.is_tx = false; break;
-			case 't': config.is_tx = true; break;
+			case 1:
+			case 0:
+				break;
+			case 't':
+				time = atoi(optarg);
+				break;
+			default: 
+				print_usage();
+				exit(EXIT_FAILURE);
 		}
 	}
 
@@ -215,7 +231,7 @@ int main(int argc, char *argv[])
  	}
 
 	if(config.is_tx){
-		channel_to_socket(config.vocoder_identification, tty_handle, send_to_socket, config.number_block_for_out);
+		channel_to_socket((uint16_t)time, config.vocoder_identification, tty_handle, send_to_socket, config.number_block_for_out);
 	}else{
 		if(bind(sock_handle, (struct sockaddr*)&sock_proxy, sizeof(sock_proxy)) < 0) {
 			E_FATAL("failed to bind socket %s\n", strerror(errno));
@@ -254,7 +270,7 @@ int main(int argc, char *argv[])
 		// TODO: =======================END ===============================
 	
 	
-		sock_to_channel(config.vocoder_identification, tty_handle, recv_from_socket, config.number_block_for_out);
+		sock_to_channel((uint16_t)time, config.vocoder_identification, tty_handle, recv_from_socket, config.number_block_for_out);
 
 	}
 	
