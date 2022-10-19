@@ -342,7 +342,7 @@ sock_to_channel(uint16_t time, short vocoder_identification, int handle, recv_fr
 out:
 	if(s){
 		pthread_join(thread, NULL);
-		
+
 		if(send_command(time, handle, false) < 0)
 			E_FATAL("failed send command to SG1: off\n");
 		else
@@ -411,7 +411,7 @@ int channel_to_socket(uint16_t time, short vocoder_identification, int tty_handl
 	}
 
 
-	for (s = 0, count_samples = 0, count_frames = 0; !g_stopped; s++){
+	for (s = 0, count_samples = 0, count_frames = 0; !g_stopped; /* nothing */){
 
 		uint32_t tmarker;
 		uint8_t byte, crc;
@@ -507,8 +507,8 @@ int channel_to_socket(uint16_t time, short vocoder_identification, int tty_handl
 					}
 
 					gettimeofday(&point1,NULL);
-					E_INFO_NOFN("%d.\t%d.%06d\t%d bytes\n",s, point1.tv_sec, point1.tv_usec, frame_cbit * n_frames_for_out);
-
+					E_INFO_NOFN("%d.\t%d.%06d\t%d bytes\n",s++, point1.tv_sec, point1.tv_usec, frame_cbit * n_frames_for_out);
+					
 				}
 				
 				count_samples = 0;
