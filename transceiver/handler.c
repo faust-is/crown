@@ -283,7 +283,12 @@ sock_to_channel(uint16_t time, short vocoder_identification, int handle, recv_fr
 		
 		// Временная метка
 		gettimeofday(&point1,NULL);
-		E_INFO_NOFN("%d.\t%d.%06d\t%d bytes\n",s, point1.tv_sec, point1.tv_usec, frame_cbit*n_frames);
+		E_INFO_NOFN("%d.\t%d.%06d\t%d bytes\n",s, point1.tv_sec, point1.tv_usec, retval);
+
+		if(retval != frame_cbit*n_frames){
+			E_ERROR("failed size of UDP packet\n");
+			break;
+		}
 
 		if(!s){
 			if(send_command(time, handle, true) < 0){
@@ -337,12 +342,14 @@ sock_to_channel(uint16_t time, short vocoder_identification, int handle, recv_fr
 out:
 	if(s){
 		pthread_join(thread, NULL);
-		if(send_command(time, handle, false) < 0){
+		
+		if(send_command(time, handle, false) < 0)
 			E_FATAL("failed send command to SG1: off\n");
-		}
-		else{
+		else
 			E_INFO("send command to SG1: off\n");
-		}
+
+		// TODO: время в течении которого команда "дойдет" до модема SG1
+		sleep_msec(100);
 	}
 	//pthread_mutex_destroy(&mp);
 
@@ -523,13 +530,17 @@ int channel_to_socket(uint16_t time, short vocoder_identification, int tty_handl
 	}
    
 out:
-sleep_msec(100);
-	if(send_command(time, tty_handle, false) != 15){
-		E_FATAL("failed send command to SG1: off\n");
+
+	// TODO: повторяем команду 5 раз (особенности работы SG1)
+	for (size_t i = 0; i < 5; i++)
+	{
+		if(send_command(time, tty_handle, false) != 15)
+			E_FATAL("failed send command to SG1: off\n");
+		else
+			E_INFO("send command to SG1: off\n");
 	}
-	else{
-		E_INFO("send command to SG1: off\n");
-	}
+	// TODO: время в течении которого команда "дойдет" до модема SG1
+	sleep_msec(100);
 	
 	E_INFO("last number byte reading: %d\n",n_read_bytes);
 

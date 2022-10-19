@@ -21,7 +21,7 @@
 // TODO:
 #include "wav.h"
 
-#define TIME_DEFAULT 30
+#define TIME_DEFAULT 1000
 const char *const file_name_ini = "continuous.ini";
 
 // TODO: default setting
@@ -158,7 +158,7 @@ static void print_usage(){
 	E_INFO_NOFN("\nplease, use:");
 	E_INFO_NOFN("--tx [flag for transmitter]\n");
 	E_INFO_NOFN("--rx [flag for receiver]\n");
-	E_INFO_NOFN("-t or --t [time for writenning from SG1 (in sec)]\n");
+	E_INFO_NOFN("-t or --t [time for writenning from SG1 (in sec), default value: %d sec]\n", TIME_DEFAULT);
 }
 
 int main(int argc, char *argv[])
@@ -188,7 +188,7 @@ int main(int argc, char *argv[])
 			case 1:
 			case 0:
 				break;
-			case 't':
+			case 't': // необязательный параметр
 				time = atoi(optarg);
 				break;
 			default: 
@@ -197,7 +197,11 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	if (time == TIME_DEFAULT){
+		E_INFO("time writenning/reading (default): %d sec\n",TIME_DEFAULT);
+	}
 
+	/* parse *.ini */
 	if(ini_parse(file_name_ini, handler, &config) < 0){
 		E_FATAL("can't load/parse %s\n",file_name_ini);
 	}else{
@@ -236,45 +240,11 @@ int main(int argc, char *argv[])
 		if(bind(sock_handle, (struct sockaddr*)&sock_proxy, sizeof(sock_proxy)) < 0) {
 			E_FATAL("failed to bind socket %s\n", strerror(errno));
 		}
-
-		/* set port and IP for UDP socket*/
-		// memset (&sock_client, 0, sizeof(sock_client));
-		// sock_client.sin_family = AF_INET; /* IPv4 */
-		// sock_client.sin_port = htons(config.ip_port);
-		// sock_client.sin_addr.s_addr = inet_addr(config.ip);
-
-		/* check IPv4 addres*/
-		//if (sock_proxy.sin_addr.s_addr == INADDR_NONE ) {
-    	//	E_FATAL("bad address: %s\n", config.ip);
- 		//}
-
-		// TODO: запись 10 сек
-		//if(send_command(20, tty_handle) < 0){
-		//	E_FATAL("failed send command to SG1%s\n");
-		//}
-		// TODO: ===================START ===============================
-		
-	/*
-		FILE *f = NULL;
-		f = fopen("1200_5.wav", "w");
-		//f = fopen("1200_5.bin", "w");
-		if (f == NULL)
-			E_FATAL_SYSTEM("Failed to open file for writing");
-		else
-			E_INFO("yes!\n");
-
-		write_wav_stereo_header(f, SAMPLE_RATE, SAMPLE_RATE * 20, AUDIO_FORMAT_PCM);
-		recv_voice_from_sock_to_file(config.vocoder_identification, f, recv_from_socket, config.number_block_for_out);
-		fclose(f);
-	*/
-		// TODO: =======================END ===============================
-	
 	
 		sock_to_channel((uint16_t)time, config.vocoder_identification, tty_handle, recv_from_socket, config.number_block_for_out);
 
 	}
 	
-
 	close(sock_handle);
 	
 	/* перед выходом устанавливаем старые настройки */
@@ -292,136 +262,8 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-/*
-int
-main(int argc, char *argv[])
-{
 
-	configuration config;
-    config.port = NULL;
-	
 
-	FILE *fd = NULL;
-	ad_rec_t *ad = NULL;
-
-    int opt, samplerate = 8000;
-
-    
-	struct termios tty0, tty1;
-
-    E_INFO("%s COMPILED ON: %s, AT: %s\n\n", argv[0], __DATE__, __TIME__);
-    
-	if(argc == 1){
-		usage();
-		return 3;
-	}	
-
-	// Разбор параметров командной строки
-	while ((opt = getopt(argc, argv, "c:f:ml:")) != EOF) {
-		switch (opt) {
-		case 'c': // считываем канал: ТЧ/ФЛ
-		{
-			
-			if(!strcmp(optarg, CHANNEL_FL_STR ) && !strcmp(optarg, CHANNEL_TH_STR ))
-				E_FATAL("Unknow channel % s.\n",opt);
-
-			config.channel = strdup(optarg);
-			break;
-		}
-		case 'f': // чтение потока из файла
-		{
-    		if ((fd = fopen(optarg, "rb")) == NULL)
-        		E_FATAL_SYSTEM("Failed to open file '%s' for reading", optarg);
-
-			if (strlen(optarg) > 4 && strcmp(optarg + strlen(optarg) - 4, ".mp3") == 0)
-				E_FATAL("Can not decode mp3 files, convert input file to WAV 16kHz 16-bit mono before decoding.\n");
-    
-			break;
-		}
-		case 'm': // запись звука из микрофона
-		{
-			if ((ad = ad_open_dev(NULL, samplerate)) == NULL)
-				E_FATAL("Failed to open audio device\n");
-
-			if (ad_start_rec(ad) < 0)
-				E_FATAL("Failed to start recording\n");
-
-			break;
-		}
-		case 'l': // длина записи
-		{
-			// TODO:
-			break;
-		}
-		default:
-			usage();
-			return 3;
-		}
-	}
-
-	if(ini_parse("continuous.ini", handler, &config) < 0){
-		E_FATAL("Can't load *.ini");
-	}else{
-		//E_INFO("Config loaded from 'continuous.ini': port = %s, rate = %s\n",config.port, config.rate);
-		E_INFO("Config loaded from 'continuous.ini': port = %s\n",config.port);
-	}
-    
-	// Работа с COM-портом
-	//int handle = open( "/dev/ttyUSB0", O_RDWR| O_NOCTTY );
-	int handle = open(config.port, O_RDWR| O_NOCTTY );
-	memset (&tty0, 0, sizeof(tty0));
-
-	// Error Handling
-	if (tcgetattr ( handle, &tty0 ) != 0 ) {
-		E_FATAL("Error: %d from tcgetattr %s", errno, strerror(errno));
-	}
-
-	tty1 = tty0;
-
-	if (!strcmp(config.channel, CHANNEL_FL_STR))
-	{
-		// Set Baud Rate
-		cfsetospeed (&tty0, (speed_t)B9600);
-		cfsetispeed (&tty0, (speed_t)B9600);
-
-		// Setting other Port Stuff
-		tty0.c_cflag     &=  ~PARENB;            // Make 8n1
-		tty0.c_cflag     &=  ~CSTOPB;
-		tty0.c_cflag     &=  ~CSIZE;
-		tty0.c_cflag     |=  CS8;
-
-		tty0.c_cflag     &=  ~CRTSCTS;           // no flow control
-		tty0.c_cc[VMIN]   =  1;                  // (1) read doesn't block
-		tty0.c_cc[VTIME]  =  5;                  // (5) 0.5 seconds read timeout
-		tty0.c_cflag     |=  CREAD | CLOCAL;     // turn on READ & ignore ctrl lines
-	}else{ // C1_TH
-		// TODO:
-	}
-	
-	// Make raw
-	cfmakeraw(&tty0);
-
-	// Flush Port, then applies attributes
-	tcflush(handle, TCIFLUSH);
-	if (tcsetattr(handle, TCSANOW, &tty0) != 0) {
-   		E_FATAL("Error: %d from tcgetattr %s", errno, strerror(errno));
-	}
-
-	if (fd) {
-        recognize_from_file(fd, samplerate, config.vocoder_identification, handle);
-    }else if(ad) {
-        recognize_from_microphone(ad, config.vocoder_identification, handle);
-	}else{
-		usage();
-    }
-    
-	fclose(handle);
-	free(config.port);
-	free(config.channel);
-
-    return 0;
-}
-*/
 #if defined(_WIN32_WCE)
 #pragma comment(linker,"/entry:mainWCRTStartup")
 #include <windows.h>
