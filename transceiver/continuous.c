@@ -18,8 +18,6 @@
 #include "ini.h"
 #include "handler.h"
 
-// TODO:
-#include "wav.h"
 
 #define TIME_DEFAULT 1000
 const char *const file_name_ini = "continuous.ini";

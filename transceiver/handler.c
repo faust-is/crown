@@ -6,17 +6,24 @@
 #include <sys/resource.h>
 #include <sys/time.h>
 
+#include <glob.h>
+#include <linux/input.h>
+
 #include <pthread.h>
 
 #include "handler.h"
-#include "wav.h"
 #include "err.h"
 #include "convert.h"
 
 /**
- * @brief Global flag to stop applocation running 
+ * @brief Global flag to stop applocation running
  */
 static volatile bool g_stopped = false;
+
+/**
+ * @brief Global flag to press key
+ */
+static volatile bool g_press_key = false;
 
 /**
  * @brief Signal handler.
@@ -42,34 +49,70 @@ sleep_msec(int32_t ms)
 }
 
 
-long
-timeval_diff(struct timeval *difference,
-             struct timeval *end_time,
-             struct timeval *start_time
-            )
-{
-  struct timeval temp_diff;
+/* Check press Key*/
+void keycode_of_key_being_pressed(void) {
 
-  if(difference==NULL)
-  {
-    difference=&temp_diff;
-  }
+	struct timeval point0, point1;
+	glob_t kbddev;	// Glob structure for keyboard devices
 
-  difference->tv_sec =end_time->tv_sec -start_time->tv_sec ;
-  difference->tv_usec=end_time->tv_usec-start_time->tv_usec;
+	FILE *fhandle;
+	int keycode;                                // keycode of key being pressed
 
-  // Using while instead of if below makes the code slightly more robust.
+	glob("/dev/input/by-path/*-kbd", 0, 0, &kbddev); // Glob select all keyboards
 
-  while(difference->tv_usec<0)
-  {
-    difference->tv_usec+=1000000;
-    difference->tv_sec -=1;
-  }
+	while (!g_stopped)
+	{
+		gettimeofday(&point0,NULL);
 
-  return (1000000LL* difference->tv_sec+
-                   difference->tv_usec) / 1000;
+		keycode = -1; 
 
-} // timeval_diff()
+		for (int i = 0; i < kbddev.gl_pathc ; i++ ) {    // Loop through all the keyboard devices ...
+			if (!(fhandle = fopen(kbddev.gl_pathv[i], "r"))) { // ... and open them in turn (slow!)
+				E_ERROR("Run as root to read keyboard devices"); 
+				exit(1);      
+			}
+					
+			char key_map[KEY_MAX/8 + 1];        	// Create a bit array the size of the number of keys
+			memset(key_map, 0, sizeof(key_map));	// Fill keymap[] with zero's
+			ioctl(fileno(fhandle), EVIOCGKEY(sizeof(key_map)), key_map); // Read keyboard state into keymap[]
+			for (int k = 0; k < KEY_MAX/8 + 1 && keycode < 0; k++) { // scan bytes in key_map[] from left to right
+				for (int j = 0; j < 8 ; j++) {      // scan each byte from lsb to msb
+					if (key_map[k] & (1 << j)) {    // if this bit is set: key was being pressed
+						keycode = 8*k + j ;         // calculate corresponding keycode 
+						break;                      // don't scan for any other keys
+					}
+				}   
+			}
+
+			fclose(fhandle);
+
+			if(keycode){
+				break;
+			}
+  		}
+
+		g_press_key = (keycode == KEY_LEFTSHIFT);
+
+		gettimeofday(&point1,NULL);
+
+		point1.tv_sec -= point0.tv_sec;
+		point1.tv_usec -=point0.tv_usec;
+
+		while(point1.tv_usec < 0)
+  		{
+    		point1.tv_usec+=1000000;
+    		point1.tv_sec -=1;
+  		}
+
+		// 240 мс
+		long long d = (240000 - (1000000LL* point1.tv_sec+
+                   point1.tv_usec)) /1000; // [ms]
+
+		if(d > 0) sleep_msec(d);
+	}
+	pthread_exit(0);
+	
+}
 
 
 static unsigned int SG1_count_voice_frame = 0; //
@@ -124,7 +167,7 @@ send_command(uint16_t time, int handle, bool started){
 
 
 void
-write_SG1_alaw(int tty_handle, unsigned char * data, int len){
+write_SG1_alaw(int handle, unsigned char * data, int len){
 	
 	unsigned char * buffer2 = (unsigned char *)malloc(len + 11);
 
@@ -153,7 +196,7 @@ write_SG1_alaw(int tty_handle, unsigned char * data, int len){
 	
 
 	/* Отправка данных в модем */
-	int retval = write(tty_handle, buffer2, SG1_len_L3 + 6);
+	int retval = write(handle, buffer2, SG1_len_L3 + 6);
 	if(SG1_len_L3 + 6 != retval){
 		E_INFO("error write to COM-port\n");
 	}
@@ -162,7 +205,7 @@ write_SG1_alaw(int tty_handle, unsigned char * data, int len){
 
 
 void
-write_SG1_pcm(int tty_handle, const int16_t * data, int len){
+write_SG1_pcm(int handle, const int16_t * data, int len){
 
 	uint8_t * buffer2 = (uint8_t *)malloc(len + 11);
 
@@ -194,13 +237,14 @@ write_SG1_pcm(int tty_handle, const int16_t * data, int len){
 	
 
 	/* Отправка данных в модем */
-	int retval = write(tty_handle, buffer2, SG1_len_L3 + 6);
+	int retval = write(handle, buffer2, SG1_len_L3 + 6);
 	if(SG1_len_L3 + 6 != retval){
 		E_INFO("error write to COM-port\n");
 	}
 
 	free(buffer2);
 }
+
 struct pthread_arg
 {
 	int handle;
@@ -223,8 +267,7 @@ void* pthread_write_SG1_pcm(void * data){
 	pthread_exit(0);
 }
 
-int
-sock_to_channel(uint16_t time, short vocoder_identification, int handle, recv_from_handler receiving, int n_frames){
+int sock_to_channel(uint16_t time, short vocoder_identification, int handle, recv_from_handler receiving, int n_frames){
 
 	
 	pthread_t thread;
@@ -262,7 +305,6 @@ sock_to_channel(uint16_t time, short vocoder_identification, int handle, recv_fr
     uint8_t * c_frame = (uint8_t *)malloc(frame_cbit * n_frames);
 
 	size_t frame_samples = frame_sp / sizeof(int16_t);
-
 
 	E_INFO("frame_cbit: %zu frame_sp: %zu\n",frame_cbit, frame_sp);
 
@@ -362,11 +404,12 @@ out:
 
 
 
-int channel_to_socket(uint16_t time, short vocoder_identification, int tty_handle, send_to_handler sending, int n_frames_for_out){
+int channel_to_socket(uint16_t time, short vocoder_identification, int handle, send_to_handler sending, int n_frames_for_out){
         
 	int n_read_bytes, count_samples, count_frames, s;
 	uint16_t size_block;
 	struct timeval point1;
+	pthread_t thread_kb;
 
 	E_INFO("start send voice from serial port to socket\n");
 
@@ -403,13 +446,14 @@ int channel_to_socket(uint16_t time, short vocoder_identification, int tty_handl
 	/*
 	/ Отправляем в модем команду на выдачу выборки в течении INT16_MAX сек
 	*/
-	if(send_command(time, tty_handle, true) != 15){
+	if(send_command(time, handle, true) != 15){
 		E_FATAL("failed send command to SG1%s\n");
 	}
 	else{
 		E_INFO("send command to SG1: on\n");
 	}
 
+	pthread_create(&thread_kb, NULL, keycode_of_key_being_pressed, NULL);
 
 	for (s = 0, count_samples = 0, count_frames = 0; !g_stopped; /* nothing */){
 
@@ -417,7 +461,7 @@ int channel_to_socket(uint16_t time, short vocoder_identification, int tty_handl
 		uint8_t byte, crc;
 
 		/* Читаем и сверяем маркер */
-		n_read_bytes = read(tty_handle, &tmarker, 4);
+		n_read_bytes = read(handle, &tmarker, 4);
 		if((4 != n_read_bytes) || (tmarker != marker)){
 			E_INFO("error reading marker: %x\n",tmarker);
 			goto out;
@@ -425,7 +469,7 @@ int channel_to_socket(uint16_t time, short vocoder_identification, int tty_handl
 
 		
 		/* Длина блока */
-		n_read_bytes = read(tty_handle, &size_block, sizeof(size_block));
+		n_read_bytes = read(handle, &size_block, sizeof(size_block));
 		if(sizeof(size_block) != n_read_bytes){
 			E_INFO("error reading length of frame body\n");
 			goto out;
@@ -441,7 +485,7 @@ int channel_to_socket(uint16_t time, short vocoder_identification, int tty_handl
 		crc = 0;
 		for (int i = 0; i < 4; i++)
 		{
-			n_read_bytes = read(tty_handle, &byte, 1);
+			n_read_bytes = read(handle, &byte, 1);
 			if(n_read_bytes < 1) {
 				E_INFO("error reading frame body: %d from %d\n", count_bytes, size_block);
 				goto out;
@@ -457,7 +501,7 @@ int channel_to_socket(uint16_t time, short vocoder_identification, int tty_handl
 
 		while(count_bytes < size_block - 1){
 
-			n_read_bytes = read(tty_handle, &byte, 1);
+			n_read_bytes = read(handle, &byte, 1);
 			if (n_read_bytes < 1) {
 				E_INFO("error reading frame body: %d from %d\n",count_bytes,size_block);
 				goto out;
@@ -488,36 +532,42 @@ int channel_to_socket(uint16_t time, short vocoder_identification, int tty_handl
 				/ а после результат с выхода вокодера записывается в файл
 				*/
 
-				// TODO: вынести в отдельный поток
+				if(g_press_key){
+					// TODO: вынести в отдельный поток
 
-				int status = vocoder_process(enc, &c_frame[frame_cbit * (count_frames % n_frames_for_out)], buffer);		
-				if (status < 0 ) 
-				{
-				    E_FATAL("encoder failed, status = %d\n", status);
-				    goto out;
-				}
-
-				count_frames++;
-
-				if ((count_frames % n_frames_for_out) == 0){
-
-					/* Отправка блока данных по UDP */
-					if(sending(c_frame,frame_cbit * n_frames_for_out) != frame_cbit * n_frames_for_out){
-						E_FATAL("error: failed to send to socket\n");
+					int status = vocoder_process(enc, &c_frame[frame_cbit * (count_frames % n_frames_for_out)], buffer);		
+					if (status < 0 ) 
+					{
+						E_FATAL("encoder failed, status = %d\n", status);
+						goto out;
 					}
 
+
+					if ((++count_frames % n_frames_for_out) == 0){
+
+						/* Отправка блока данных по UDP */
+						if(sending(c_frame,frame_cbit * n_frames_for_out) != frame_cbit * n_frames_for_out){
+							E_FATAL("error: failed to send to socket\n");
+						}
+
+						gettimeofday(&point1,NULL);
+						E_INFO_NOFN("%d.\t%d.%06d\t%d bytes\n",s++, point1.tv_sec, point1.tv_usec, frame_cbit * n_frames_for_out);
+						
+					}
+				}else{
+					// если не зажата клавиша, запись блоков к отправке начнется заново
 					gettimeofday(&point1,NULL);
-					E_INFO_NOFN("%d.\t%d.%06d\t%d bytes\n",s++, point1.tv_sec, point1.tv_usec, frame_cbit * n_frames_for_out);
-					
+					E_INFO_NOFN("\t%d.%06d\n", point1.tv_sec, point1.tv_usec);
+
+					count_frames = 0;
 				}
-				
 				count_samples = 0;
 			}
 		}
 
 		/* Проверка контрольной суммы - дополнение до двух */
 		if (count_bytes == size_block - 1){
-			n_read_bytes = read(tty_handle, &byte, 1);
+			n_read_bytes = read(handle, &byte, 1);
 			crc = ~crc + 1;
 			if((n_read_bytes != 1) || (byte != crc)){
 				E_INFO("error check sum: %x vs %x\n",byte, crc); // ~code+1
@@ -534,7 +584,7 @@ out:
 	// TODO: повторяем команду 5 раз (особенности работы SG1)
 	for (size_t i = 0; i < 5; i++)
 	{
-		if(send_command(time, tty_handle, false) != 15)
+		if(send_command(time, handle, false) != 15)
 			E_FATAL("failed send command to SG1: off\n");
 		else
 			E_INFO("send command to SG1: off\n");
